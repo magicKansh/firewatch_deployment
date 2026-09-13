@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-pandas
-plotly
-jinja2        
-python-multipart
