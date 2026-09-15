@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<script>
+document.getElementById("gps-submit").onclick = async () => {
+    const start = document.getElementById("start").value;
+    const end = document.getElementById("end").value;
+
+    const loading = document.getElementById("loading");
+    loading.style.display = "block";
+
+    try {
+        const res = await fetch("/route", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ start, end })
+        });
+
+        const route = await res.json();
+
+        const routeTrace = {
+            type: "scattermapbox",
+            lat: route.lat,
+            lon: route.lon,
+            mode: "lines",
+            line: { color: "blue", width: 4 },
+            name: "Safe Route"
+        };
+
+        const plotDiv = document.querySelector(".plotly-graph-div");
+        Plotly.addTraces(plotDiv, routeTrace);
+    } catch (err) {
+        alert("Could not calculate a safe route.");
+    }
+    loading.style.display = "none";
+
+    if (!route.lat || !route.lat.length === 0) {
+        alert("No safe route found. Try a different destination.");
+        loading.style.display = "none";
+        return;
+    }
+    document.getElementById("clear-route").onclick = () => {
+        const plotDiv = document.querySelector(".plotly-graph-div");
+        Plotly.deleteTraces(plotDiv,- 1);
+    };
+};
+</script>
+
+
+<body>
+     <div id="home-overlay">
+        <div id="home-content">
+            <h1 id = "app-title"> Firewatch </h1>
+            <p id="app-subtitle">A tool for locating and routing around fires.</p>
+            <button id="view-map-button" onclick="
+                document.getElementById('home-overlay').style.display = 'none';
+                document.getElementById('gps-panel').style.display = 'block';
+                document.querySelectorAll('g.colorbar').forEach(cb => cb.style.display = 'block');
+            ">
+                Start Exploring
+            </button>
+        </div>
+    </div>
+    <div id="gps-panel">
+        <h3>Navigation</h3>
+        <label for ="start">Your Location:</label>
+        <input type="text" id="start" placeholder="Enter current location">
+
+        <label for="end">Destination:</label>
+        <input type="text" id="end" placeholder="Enter destination">
+        <button id="gps-submit">Get Route</button>
+    </div>
+    <div id="loading" style="
+        display: none;
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #0008;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        font-size: 14px;
+        z-index: 9999;
+    "> 
+        Calculating safe route...
+    </div>"
+
+    <button id ="clear-route" style="
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #222;
+        border: none;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        cursor: pointer;
+    ">  
+        Clear Route
+    </button>
+
+    {{ graph_html|safe }}
+    
+</body>
+</html> 
