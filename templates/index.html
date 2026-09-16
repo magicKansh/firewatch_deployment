@@ -5,6 +5,56 @@
 </head>
 
 <script>
+function setupAutocomplete(inputId, suggestionsId) {
+    const input = document.getElementById(inputId);
+    const box = document.getElementById(suggestionsId);
+    let debounceTimer;
+
+    input.addEventListener("input", () => {
+        clearTimeout(debounceTimer);
+        const query = input.value.trim();
+        if (query.length < 3) {
+            box.innerHTML = "";
+            box.style.display = "none";
+            return;
+        }
+
+        debounceTimer = setTimeout(async () => {
+            try {
+                const res = await fetch(`/autocomplete?query=${encodeURIComponent(query)}`);
+                const data = await res.json();
+                
+                box.innerHTML = "";
+                if (data.suggestions.length === 0) {
+                    box.style.display = "none";
+                    return;
+                }
+
+                data.suggestions.forEach(s => {
+                    const item = document.createElement("div");
+                    item.textContent = s;
+                    item.onclick = () => {
+                        input.value = s;
+                        box.innerHTML = "";
+                        box.style.display = "none";
+                    };
+                    box.appendChild(item);
+                });
+                box.style.display = "block";
+            } catch (err) {
+                box.style.display = "none";
+            }
+        }, 300);
+    });
+    document.addEventListener("click", (e) => {
+        if (e.target !== input) {
+            box.style.display = "none";
+        }
+    });
+}
+setupAutocomplete("start", "start-suggestions");
+setupAutocomplete("end", "end-suggestions");
+
 document.getElementById("gps-submit").onclick = async () => {
     const start = document.getElementById("start").value;
     const end = document.getElementById("end").value;
@@ -67,10 +117,13 @@ document.getElementById("gps-submit").onclick = async () => {
     <div id="gps-panel">
         <h3>Navigation</h3>
         <label for ="start">Your Location:</label>
-        <input type="text" id="start" placeholder="Enter current location">
+        <input type="text" id="start" placeholder="Enter current location" autocomplete="off">
+        <div class="suggestions" id="start-suggestions"></div>
 
         <label for="end">Destination:</label>
-        <input type="text" id="end" placeholder="Enter destination">
+        <input type="text" id="end" placeholder="Enter destination" autocomplete="off">
+        <div class="suggestions" id="end-suggestions"></div>
+        
         <button id="gps-submit">Get Route</button>
     </div>
     <div id="loading" style="
