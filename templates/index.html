@@ -5,98 +5,104 @@
 </head>
 
 <script>
-function setupAutocomplete(inputId, suggestionsId) {
-    const input = document.getElementById(inputId);
-    const box = document.getElementById(suggestionsId);
-    let debounceTimer;
+document.addEventListener("DOMContentLoaded", () => {
 
-    input.addEventListener("input", () => {
-        clearTimeout(debounceTimer);
-        const query = input.value.trim();
-        if (query.length < 3) {
-            box.innerHTML = "";
-            box.style.display = "none";
-            return;
-        }
+    function setupAutocomplete(inputId, suggestionsId) {
+        const input = document.getElementById(inputId);
+        const box = document.getElementById(suggestionsId);
+        let debounceTimer;
 
-        debounceTimer = setTimeout(async () => {
-            try {
-                const res = await fetch(`/autocomplete?query=${encodeURIComponent(query)}`);
-                const data = await res.json();
-                
+        input.addEventListener("input", () => {
+            clearTimeout(debounceTimer);
+            const query = input.value.trim();
+            if (query.length < 3) {
                 box.innerHTML = "";
-                if (data.suggestions.length === 0) {
-                    box.style.display = "none";
-                    return;
-                }
-
-                data.suggestions.forEach(s => {
-                    const item = document.createElement("div");
-                    item.textContent = s;
-                    item.onclick = () => {
-                        input.value = s;
-                        box.innerHTML = "";
+                box.style.display = "none";
+                return;
+            }
+            
+            debounceTimer = setTimeout(async () => {
+                try {
+                    const res = await fetch(`/autocomplete?query=${encodeURIComponent(query)}`);
+                    const data = await res.json();
+                    
+                    box.innerHTML = "";
+                    if (data.suggestions.length === 0) {
                         box.style.display = "none";
-                    };
-                    box.appendChild(item);
-                });
-                box.style.display = "block";
-            } catch (err) {
+                        return;
+                    }
+
+                    data.suggestions.forEach(s => {
+                        const item = document.createElement("div");
+                        item.textContent = s;
+                        item.onclick = () => {
+                            input.value = s;
+                            box.innerHTML = "";
+                            box.style.display = "none";
+                        };
+                        box.appendChild(item);
+                    });
+                    box.style.display = "block";
+                } catch (err) {
+                    box.style.display = "none";
+                }
+            }, 300);
+        });
+        document.addEventListener("click", (e) => {
+            if (e.target !== input) {
                 box.style.display = "none";
             }
-        }, 300);
-    });
-    document.addEventListener("click", (e) => {
-        if (e.target !== input) {
-            box.style.display = "none";
-        }
-    });
-}
-setupAutocomplete("start", "start-suggestions");
-setupAutocomplete("end", "end-suggestions");
-
-document.getElementById("gps-submit").onclick = async () => {
-    const start = document.getElementById("start").value;
-    const end = document.getElementById("end").value;
-
-    const loading = document.getElementById("loading");
-    loading.style.display = "block";
-
-    try {
-        const res = await fetch("/route", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ start, end })
         });
-
-        const route = await res.json();
-
-        const routeTrace = {
-            type: "scattermapbox",
-            lat: route.lat,
-            lon: route.lon,
-            mode: "lines",
-            line: { color: "blue", width: 4 },
-            name: "Safe Route"
-        };
-
-        const plotDiv = document.querySelector(".plotly-graph-div");
-        Plotly.addTraces(plotDiv, routeTrace);
-    } catch (err) {
-        alert("Could not calculate a safe route.");
     }
-    loading.style.display = "none";
+    setupAutocomplete("start", "start-suggestions");
+    setupAutocomplete("end", "end-suggestions");
 
-    if (!route.lat || !route.lat.length === 0) {
-        alert("No safe route found. Try a different destination.");
+    document.getElementById("gps-submit").onclick = async () => {
+        const start = document.getElementById("start").value;
+        const end = document.getElementById("end").value;
+
+        const loading = document.getElementById("loading");
+        loading.style.display = "block";
+        
+        let route;
+        try {
+            const res = await fetch("/route", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ start, end })
+            });
+
+            route = await res.json();
+
+            const routeTrace = {
+                type: "scattermapbox",
+                lat: route.lat,
+                lon: route.lon,
+                mode: "lines",
+                line: { color: "blue", width: 4 },
+                name: "Safe Route"
+            };
+
+            const plotDiv = document.querySelector(".plotly-graph-div");
+            Plotly.addTraces(plotDiv, routeTrace);
+        } catch (err) {
+            alert("Could not calculate a safe route.");
+            loading.style.display = "none";
+            return;
+        }
+        
         loading.style.display = "none";
-        return;
-    }
-    document.getElementById("clear-route").onclick = () => {
-        const plotDiv = document.querySelector(".plotly-graph-div");
-        Plotly.deleteTraces(plotDiv,- 1);
+
+        if (!route.lat || !route.lat.length === 0) {
+            alert("No safe route found. Try a different destination.");
+        }
+        
+        document.getElementById("clear-route").onclick = () => {
+            const plotDiv = document.querySelector(".plotly-graph-div");
+            Plotly.deleteTraces(plotDiv,- 1);
+        };
     };
-};
+});
 </script>
 
 
