@@ -80,6 +80,6 @@ def firewatch(request: Request):
     )
 
     graph_html = pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
-    return templates.TemplateResponse("index.html", {"request": request, "graph_html": graph_html})
+    return templates.TemplateResponse(request, "index.html", {"graph_html": graph_html})
 
 import routes
