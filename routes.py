@@ -53,3 +53,22 @@ async def calculate_route(request: Request):
     lats = [c[1] for c in coords]
 
     return {"lat": lats, "lon": lons}
+
+@app.get("/autocomplete")
+async def autocomplete(query: str):
+    if not query or len(query) < 3:
+        return {"suggestions": []}
+    
+    url = f"https://api.openrouteservice.org/geocode/autocomplete?api_key={ORS_API_KEY}&text={query}&size=5"
+    r = requests.get(url).json()
+
+    suggestions = [
+        {
+            "label": f["properties"]["label"],
+            "lon": f["geometry"]["coordinates"][0],
+            "lat": f["geometry"]["coordinates"][1]
+        }
+        for f in r.get("features", [])
+    ]
+
+    return {"suggestions": suggestions}
