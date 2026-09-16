@@ -34,7 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     data.suggestions.forEach(s => {
                         const item = document.createElement("div");
-                        item.textContent = s;
+                        item.textContent = s.label;
                         item.onclick = () => {
                             input.value = s;
                             box.innerHTML = "";
@@ -96,7 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!route.lat || !route.lat.length === 0) {
             alert("No safe route found. Try a different destination.");
         }
-        
+
         document.getElementById("clear-route").onclick = () => {
             const plotDiv = document.querySelector(".plotly-graph-div");
             Plotly.deleteTraces(plotDiv,- 1);
