@@ -1,5 +1,3 @@
-from urllib import request
-
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,10 +25,8 @@ def firewatch(request: Request):
     data = data.dropna(subset=['mag'])
     data = data[data.mag >= 0]
 
-
     center_lat = data['latitude'].mean()
     center_lon = data['longitude'].mean()
-
 
     fig = px.scatter_map(
         data,
@@ -46,7 +42,6 @@ def firewatch(request: Request):
 
     fig.update_traces(hoverinfo='skip', hovertemplate=None)
 
-
     core_dots = px.scatter_map(
         data,
         lat='latitude',
@@ -61,22 +56,21 @@ def firewatch(request: Request):
     for trace in core_dots.data:
         fig.add_trace(trace)
 
-
     fig.update_layout(
         autosize=True,
-        margin=dict(l=0, r=0, t=0, b=0),  
+        margin=dict(l=0, r=0, t=0, b=0),
         coloraxis=core_dots.layout.coloraxis,
         coloraxis_colorbar=dict(
             title="<b>Magnitude</b><br>",
             title_font=dict(color="white", size=14),
             tickfont=dict(color="white", size=12),
-            len=0.4,                   
-            thickness=15,              
-            x=0.93,                     
-            y=0.05,                     
+            len=0.4,
+            thickness=15,
+            x=0.93,
+            y=0.05,
             xanchor="right",
             yanchor="bottom",
-            bgcolor="rgba(0, 0, 0, 0.6)", 
+            bgcolor="rgba(0, 0, 0, 0.6)",
             outlinecolor="rgba(255, 255, 255, 0.2)",
             outlinewidth=1,
             title_side="top",
@@ -85,12 +79,7 @@ def firewatch(request: Request):
         )
     )
 
-    graph_html = pio.to_html(
-        fig,
-        full_html=False,
-        include_plotlyjs='cdn',
-    )
-    return templates.TemplateResponse(
-       "index.html", 
-       {"request": request, "graph_html": graph_html}
-    )
+    graph_html = pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
+    return templates.TemplateResponse("index.html", {"request": request, "graph_html": graph_html})
+
+import routes
