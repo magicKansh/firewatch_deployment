@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from shapely.geometry import Point, mapping
 from shapely.ops import unary_union
-from fastapi import FastAPI, Request
+from fastapi import Request
 from map import app
 
 ORS_API_KEY = os.getenv("ORS_API_KEY")
@@ -19,6 +19,7 @@ async def calculate_route(request: Request):
         r = requests.get(url).json()
         coords = r["features"][0]["geometry"]["coordinates"]
         return coords
+
     start = geocode(start_text)
     end = geocode(end_text)
 
@@ -30,15 +31,14 @@ async def calculate_route(request: Request):
         p = Point(row['longitude'], row['latitude'])
         danger = p.buffer(0.01)
         fire_polygons.append(danger)
+
     avoid_area = unary_union(fire_polygons)
     avoid_geojson = mapping(avoid_area)
 
     route_url = "https://api.openrouteservice.org/v2/directions/driving-car"
     payload = {
         "coordinates": [start, end],
-        "options": {
-            "avoid_polygons": avoid_geojson
-        }
+        "options": {"avoid_polygons": avoid_geojson}
     }
 
     headers = {
