@@ -35,7 +35,7 @@ async def calculate_route(request: Request):
     avoid_area = unary_union(fire_polygons)
     avoid_geojson = mapping(avoid_area)
 
-    route_url = "https://api.openrouteservice.org/v2/directions/driving-car"
+    route_url = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
     payload = {
         "coordinates": [start, end],
         "options": {"avoid_polygons": avoid_geojson}
@@ -48,6 +48,8 @@ async def calculate_route(request: Request):
 
     route = requests.post(route_url, json=payload, headers=headers).json()
 
+    if "features" not in route:
+        return {"error": route.get("error", "Unknown routing error"), "raw": route}
     coords = route["features"][0]["geometry"]["coordinates"]
     lons = [c[0] for c in coords]
     lats = [c[1] for c in coords]
