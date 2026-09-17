@@ -74,6 +74,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
             route = await res.json();
 
+            const routeHalo = {
+                type: "scattermapbox",
+                lat: route.lat,
+                lon: route.lon,
+                mode: "lines",
+                line: { color: "white", width: 8 },
+                hoverinfo: "skip",
+                name: "Safe Route Halo"
+            };
+
             const routeTrace = {
                 type: "scattermapbox",
                 lat: route.lat,
@@ -99,7 +109,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         document.getElementById("clear-route").onclick = () => {
             const plotDiv = document.querySelector(".plotly-graph-div");
-            Plotly.deleteTraces(plotDiv,- 1);
+            const n = plotDiv.data.length;
+            Plotly.deleteTraces(plotDiv, [n - 2, n - 1]);
         };
     };
 });
