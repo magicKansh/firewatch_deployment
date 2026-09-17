@@ -7,6 +7,27 @@
 <script>
 document.addEventListener("DOMContentLoaded", () => {
 
+    function computeSquareBounds(lats, lons, paddingFactor = 0.4) {
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+
+        let span = Math.max(maxLat - minLat, maxLon - minLon);
+        if (span === 0) span = 0.05;
+        span *= (1 + paddingFactor);
+
+        const centerLat = (minLat + maxLat) / 2;
+        const centerLon = (minLon + maxLon) / 2;
+
+        return {
+            west: centerLon - span / 2,
+            east: centerLon + span / 2,
+            south: centerLat - span / 2,
+            north: centerLat + span / 2
+        };
+    }
+
     function setupAutocomplete(inputId, suggestionsId) {
         const input = document.getElementById(inputId);
         const box = document.getElementById(suggestionsId);
@@ -20,12 +41,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 box.style.display = "none";
                 return;
             }
-            
+
             debounceTimer = setTimeout(async () => {
                 try {
                     const res = await fetch(`/autocomplete?query=${encodeURIComponent(query)}`);
                     const data = await res.json();
-                    
+
                     box.innerHTML = "";
                     if (data.suggestions.length === 0) {
                         box.style.display = "none";
@@ -34,11 +55,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     data.suggestions.forEach(s => {
                         const item = document.createElement("div");
+                        item.className = "suggestion-item";
                         item.textContent = s.label;
                         item.onclick = () => {
                             input.value = s.label;
                             box.innerHTML = "";
                             box.style.display = "none";
+
+                        
+                            if (inputId === "start") {
+                                const plotDiv = document.querySelector(".plotly-graph-div");
+                                Plotly.relayout(plotDiv, {
+                                    "map.center": { lat: s.lat, lon: s.lon },
+                                    "map.zoom": 12
+                                });
+                            }
                         };
                         box.appendChild(item);
                     });
@@ -48,12 +79,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }, 300);
         });
+
         document.addEventListener("click", (e) => {
             if (e.target !== input) {
                 box.style.display = "none";
             }
         });
     }
+
     setupAutocomplete("start", "start-suggestions");
     setupAutocomplete("end", "end-suggestions");
 
@@ -63,19 +96,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const loading = document.getElementById("loading");
         loading.style.display = "block";
-        
+
         let route;
         try {
             const res = await fetch("/route", {
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ start, end })
             });
 
             route = await res.json();
 
+            if (!route.lat || route.lat.length === 0) {
+                alert(route.error || "No safe route found. Try a different destination.");
+                loading.style.display = "none";
+                return;
+            }
+
             const routeHalo = {
-                type: "scattermapbox",
+                type: "scattermap",
                 lat: route.lat,
                 lon: route.lon,
                 mode: "lines",
@@ -85,33 +124,33 @@ document.addEventListener("DOMContentLoaded", () => {
             };
 
             const routeTrace = {
-                type: "scattermapbox",
+                type: "scattermap",
                 lat: route.lat,
                 lon: route.lon,
                 mode: "lines",
-                line: { color: "blue", width: 4 },
+                line: { color: "#1e90ff", width: 4 },
                 name: "Safe Route"
             };
 
             const plotDiv = document.querySelector(".plotly-graph-div");
-            Plotly.addTraces(plotDiv, routeTrace);
+            Plotly.addTraces(plotDiv, [routeHalo, routeTrace]);
+
+            const bounds = computeSquareBounds(route.lat, route.lon);
+            Plotly.relayout(plotDiv, { "map.bounds": bounds });
+
         } catch (err) {
             alert("Could not calculate a safe route.");
             loading.style.display = "none";
             return;
         }
-        
+
         loading.style.display = "none";
+    };
 
-        if (!route.lat || !route.lat.length === 0) {
-            alert("No safe route found. Try a different destination.");
-        }
-
-        document.getElementById("clear-route").onclick = () => {
-            const plotDiv = document.querySelector(".plotly-graph-div");
-            const n = plotDiv.data.length;
-            Plotly.deleteTraces(plotDiv, [n - 2, n - 1]);
-        };
+    document.getElementById("clear-route").onclick = () => {
+        const plotDiv = document.querySelector(".plotly-graph-div");
+        const n = plotDiv.data.length;
+        Plotly.deleteTraces(plotDiv, [n - 2, n - 1]); 
     };
 });
 </script>
