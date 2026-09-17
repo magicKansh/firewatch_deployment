@@ -47,7 +47,8 @@ async def calculate_route(request: Request):
     }
 
     route = requests.post(route_url, json=payload, headers=headers).json()
-
+    print("ORS response: ", route)
+    
     if "features" not in route:
         return {"error": route.get("error", "Unknown routing error"), "raw": route}
     coords = route["features"][0]["geometry"]["coordinates"]
