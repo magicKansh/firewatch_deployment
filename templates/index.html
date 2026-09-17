@@ -36,7 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         const item = document.createElement("div");
                         item.textContent = s.label;
                         item.onclick = () => {
-                            input.value = s;
+                            input.value = s.label;
                             box.innerHTML = "";
                             box.style.display = "none";
                         };
