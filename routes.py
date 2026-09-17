@@ -47,10 +47,11 @@ async def calculate_route(request: Request):
     }
 
     route = requests.post(route_url, json=payload, headers=headers).json()
-    print("ORS response: ", route)
-    
+
     if "features" not in route:
-        return {"error": route.get("error", "Unknown routing error"), "raw": route}
+        error_msg = route.get("error", {}).get("message", "Unknown routing error")
+        return {"error": error_msg, "lat": [], "lon": []}
+    
     coords = route["features"][0]["geometry"]["coordinates"]
     lons = [c[0] for c in coords]
     lats = [c[1] for c in coords]
@@ -61,9 +62,17 @@ async def calculate_route(request: Request):
 async def autocomplete(query: str):
     if not query or len(query) < 3:
         return {"suggestions": []}
-    
-    url = f"https://api.openrouteservice.org/geocode/autocomplete?api_key={ORS_API_KEY}&text={query}&size=5"
-    r = requests.get(url).json()
+
+    def search(layers=None):
+        url = f"https://api.openrouteservice.org/geocode/autocomplete?api_key={ORS_API_KEY}&text={query}&size=5"
+        if layers:
+            url += f"&layers={layers}"
+        return requests.get(url, timeout=10).json()
+
+    r = search(layers="venue,address,street,locality,neighbourhood")
+
+    if not r.get("features"):
+        r = search()
 
     suggestions = [
         {
@@ -73,5 +82,5 @@ async def autocomplete(query: str):
         }
         for f in r.get("features", [])
     ]
-
     return {"suggestions": suggestions}
+
