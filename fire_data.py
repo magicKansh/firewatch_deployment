@@ -11,6 +11,10 @@ CACHE_TTL_SECONDS = 900
 def _load_reported_fires():
     data_path = os.path.join(os.path.dirname(__file__), 'data', 'fires.csv')
     data = pd.read_csv(data_path)
+    data['mag'] = pd.to_numeric(data['mag'], errors='coerce')
+    df['mag'] = (df.get('frp', 1) / df.get('frp', 1).max() * 5).clip(lower=0.5, upper=5)
+    print("Satellite mag sample:", df['mag'].head())
+    print("Raw frp sample:", df.get('frp', 'MISSING').head() if 'frp' in df.columns else "frp column missing!")
     data['source'] = 'reported'
     return data[['latitude', 'longitude', 'mag', 'place', 'source']]
 
