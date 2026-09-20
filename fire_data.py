@@ -1,5 +1,6 @@
 import os
 import time
+from io import StringIO
 import pandas as pd
 import requests
 
@@ -12,9 +13,6 @@ def _load_reported_fires():
     data_path = os.path.join(os.path.dirname(__file__), 'data', 'fires.csv')
     data = pd.read_csv(data_path)
     data['mag'] = pd.to_numeric(data['mag'], errors='coerce')
-    df['mag'] = (df.get('frp', 1) / df.get('frp', 1).max() * 5).clip(lower=0.5, upper=5)
-    print("Satellite mag sample:", df['mag'].head())
-    print("Raw frp sample:", df.get('frp', 'MISSING').head() if 'frp' in df.columns else "frp column missing!")
     data['source'] = 'reported'
     return data[['latitude', 'longitude', 'mag', 'place', 'source']]
 
@@ -37,7 +35,6 @@ def _load_satellite_fires(reported_df):
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
-        from io import StringIO
         df = pd.read_csv(StringIO(response.text))
     except Exception:
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
@@ -45,7 +42,7 @@ def _load_satellite_fires(reported_df):
     if df.empty or 'latitude' not in df.columns:
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
-    df['mag'] = (df.get('frp', 1) / df.get('frp', 1).max() *5).clip(lower=0.5)
+    df['mag'] = (df.get('frp', 1) / df.get('frp', 1).max() * 5).clip(lower=0.5, upper=5)
     df['place'] = 'Satellite detection'
     df['source'] = 'satellite'
 
@@ -60,10 +57,9 @@ def load_fires(use_cache=True):
     satellite = _load_satellite_fires(reported)
 
     combined = pd.concat([reported, satellite], ignore_index=True)
+    combined['mag'] = pd.to_numeric(combined['mag'], errors='coerce')
     combined = combined.dropna(subset=['latitude', 'longitude'])
 
     _cache["data"] = combined
     _cache["timestamp"] = now
     return combined
-
-    
