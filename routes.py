@@ -5,6 +5,7 @@ from shapely.geometry import Point, mapping
 from shapely.ops import unary_union
 from fastapi import Request
 from map import app
+from fire_data import load_fires
 
 ORS_API_KEY = os.getenv("ORS_API_KEY")
 
@@ -15,8 +16,7 @@ PROFILES = {
 }
 
 def get_avoid_geojson():
-    data_path = os.path.join(os.path.dirname(__file__), 'data', 'fires.csv')
-    data = pd.read_csv(data_path) 
+    data = load_fires()
 
     fire_polygons = []
     for _, row in data.iterrows():
