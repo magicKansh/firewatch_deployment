@@ -6,6 +6,55 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
+    let selectedMode = "driving-car";
+
+    function formatDuration(seconds) {
+        if (seconds == null) return "N/A";
+        const mins = Math.round(seconds / 60);
+        if (mins < 60) return `${mins} min`;  // FIXED: was "min" (undefined variable, should be "mins") AND was using single quotes '...' instead of backticks `...`, so it printed the literal text "${mins} min" instead of interpolating
+        const hrs = Math.floor(mins / 60);
+        return `${hrs} hr ${mins % 60} min`;  // FIXED: same single-quote-vs-backtick issue
+    }
+
+    async function fetchEstimates() {
+        const start = document.getElementById("start").value;
+        const end = document.getElementById("end").value;
+        if (!start || !end) return;
+
+        const selector = document.getElementById("mode-selector");
+        selector.style.display = "flex";
+        document.querySelectorAll(".mode-time").forEach(el => el.textContent = "...");
+
+        try {
+            // FIXED: was using single quotes (no interpolation), missing "&" between params (had "$end=" instead of "&end="),
+            // and "encodeURLComponent" was misspelled (should be encodeURIComponent)
+            const res = await fetch(`/estimates?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+            const data = await res.json();
+
+            document.querySelectorAll(".mode-btn").forEach(btn => {  // FIXED: was "mode-btn" missing the leading "." — querySelectorAll needs a CSS selector, so this matched nothing
+                const mode = btn.dataset.mode;
+                const timeEl = btn.querySelector(".mode-time");
+                if (data[mode] && !data[mode].error) {
+                    timeEl.textContent = formatDuration(data[mode].duration);
+                } else {
+                    timeEl.textContent = "N/A";
+                }
+            });
+        } catch (err) {
+            document.querySelectorAll(".mode-time").forEach(el => el.textContent = "N/A");
+        }
+    }
+
+    document.getElementById("start").addEventListener("blur", fetchEstimates);
+    document.getElementById("end").addEventListener("blur", fetchEstimates);
+
+    document.querySelectorAll(".mode-btn").forEach(btn => {
+        btn.onclick = () => {
+            selectedMode = btn.dataset.mode;
+            document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("mode-selected"));
+            btn.classList.add("mode-selected");
+        };
+    });
 
     function computeSquareBounds(lats, lons, paddingFactor = 0.4) {
         const minLat = Math.min(...lats);
@@ -40,7 +89,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 box.innerHTML = "";
                 box.style.display = "none";
                 return;
-                
             }
 
             debounceTimer = setTimeout(async () => {
@@ -63,7 +111,6 @@ document.addEventListener("DOMContentLoaded", () => {
                             box.innerHTML = "";
                             box.style.display = "none";
 
-                        
                             if (inputId === "start") {
                                 const plotDiv = document.querySelector(".plotly-graph-div");
                                 Plotly.relayout(plotDiv, {
@@ -103,7 +150,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const res = await fetch("/route", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ start, end })
+                body: JSON.stringify({ start, end, mode: selectedMode })
             });
 
             route = await res.json();
@@ -121,7 +168,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 mode: "lines",
                 line: { color: "white", width: 8 },
                 hoverinfo: "skip",
-                name: "Safe Route Halo"
+                showlegend: false,  // ADDED: this trace also has a "name"-less default, but explicitly hiding it keeps the legend fully off
+                name: "Route Halo"
             };
 
             const routeTrace = {
@@ -130,7 +178,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 lon: route.lon,
                 mode: "lines",
                 line: { color: "#1e90ff", width: 4 },
-                name: "Safe Route"
+                name: `Route from ${start} to ${end}`,  // FIXED: was single quotes '...' (no interpolation) instead of backticks
+                hoverinfo: "name",
+                showlegend: false
             };
 
             const plotDiv = document.querySelector(".plotly-graph-div");
@@ -151,7 +201,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("clear-route").onclick = () => {
         const plotDiv = document.querySelector(".plotly-graph-div");
         const n = plotDiv.data.length;
-        Plotly.deleteTraces(plotDiv, [n - 2, n - 1]); 
+        Plotly.deleteTraces(plotDiv, [n - 2, n - 1]);
     };
 });
 </script>
@@ -180,8 +230,16 @@ document.addEventListener("DOMContentLoaded", () => {
         <label for="end">Destination:</label>
         <input type="text" id="end" placeholder="Enter destination" autocomplete="off">
         <div class="suggestions" id="end-suggestions"></div>
-        
+
+        <!-- FIXED: each button was missing the closing ">" after data-mode="...", so "CAR"/"BIKE"/"WALK"
+             were being parsed as stray invalid HTML attributes instead of visible button text -->
+        <div id="mode-selector" style="display:none;">
+            <button class="mode-btn" data-mode="driving-car">CAR<br><span class="mode-time">--</span></button>
+            <button class="mode-btn" data-mode="cycling-regular">BIKE<br><span class="mode-time">--</span></button>
+            <button class="mode-btn" data-mode="foot-walking">WALK<br><span class="mode-time">--</span></button>
+        </div>
         <button id="gps-submit">Get Route</button>
+
     </div>
     <div id="loading" style="
         display: none;
@@ -196,7 +254,7 @@ document.addEventListener("DOMContentLoaded", () => {
         z-index: 9999;
     "> 
         Calculating safe route...
-    </div>"
+    </div>
 
     <button id ="clear-route" style="
         position: fixed;
@@ -215,4 +273,4 @@ document.addEventListener("DOMContentLoaded", () => {
     {{ graph_html|safe }}
     
 </body>
-</html> 
+</html>
