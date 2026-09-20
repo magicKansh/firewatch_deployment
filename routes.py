@@ -30,7 +30,8 @@ def call_ors_route(start, end, profile):
     route_url = f"https://api.openrouteservice.org/v2/directions/{profile}/geojson"
     payload = {
         "coordinates": [start, end],
-        "options": {"avoid_polygons": get_avoid_geojson()}
+        "options": {"avoid_polygons": get_avoid_geojson()},
+        "instructions": True
     }
     headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
     return requests.post(route_url, json=payload, headers=headers, timeout=15).json()
@@ -65,11 +66,24 @@ async def calculate_routes(request: Request):
             coords = feature["geometry"]["coordinates"]
             summary = feature["properties"]["summary"]
 
+            segments = feature["properties"].get("segments", [])
+            steps = []
+            if segments:
+                for step in segments[0].get("steps", []):
+                    steps.append({
+                        "instruction": step.get("instruction", ""),
+                        "distance": step.get("distance", 0),
+                        "duration": step.get("duration", 0),
+                    })
+
             results[key] = {
                 "lat": [c[1] for c in coords], 
                 "lon": [c[0] for c in coords],
                 "duration": summary.get("duration"),
                 "distance": summary.get("distance"),
+                "steps": steps,
+                "start": {"lat": start[1], "lon": start[0]},
+                "end": {"lat": end[1], "lon": end[0]},
             }
         except Exception as e:
             results[key] = {"error": str(e)}
