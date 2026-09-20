@@ -22,7 +22,7 @@ def health_check():
 def firewatch(request: Request):
     data = load_fires()
 
-    data['mag'] = pd.to_numeric(data['mag'], errors=='coerce')
+    data['mag'] = pd.to_numeric(data['mag'], errors='coerce')
     data['longitude'] = data['longitude'].astype(str).str.replace('−', '-').astype(float)
     data = data.dropna(subset=['mag'])
     data = data[data.mag >= 0]
