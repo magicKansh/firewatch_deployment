@@ -166,23 +166,125 @@ g.colorbar {
 }
 
 .suggestions {
-    position: relative;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
     display: none;
-    background-color: #1a1a1a;
-    border-radius: 6px;
-    margin-top: 2px;
-    max-height: 160px;
+    background-color: rgba(15,15,15,0.97);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    margin-top: 4px;
+    max-height: 180px;
     overflow-y: auto;
     z-index: 10000;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5);
 }
 
 .suggestion-item {
-    padding: 8px 10px;
-    font-size: 0.85rem;
+    padding: 9px 12px;
+    font-size: 0.9rem;
+    font-family: 'Open Sans', sans-serif;
     color: white;
     cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
 }
 
 .suggestion-item:hover {
-    background-color: #ff4500
+    background-color: #ff4500;
+}
+
+#mode-selector {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.mode-btn {
+    flex: 1;
+    background-color: #222;
+    color: white;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    padding: 8px 4px;
+    cursor: pointer;
+    font-size: 1.3rem;
+    text-align: center;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.mode-btn:hover:not(:disabled) {
+    background-color: #333;
+}
+
+.mode-selected {
+    border-color: #ff4500;
+    background-color: #333;
+}
+
+.mode-time {
+    font-size: 0.75rem;
+    font-family: 'Open Sans', sans-serif;
+}
+
+.mode-unavailable {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.mode-btn[data-mode="driving-car"].mode-selected {
+    border-color: #ff4500;
+    background-color: rgba(255, 69, 0, 0.15);
+}
+
+.mode-btn[data-mode="cycling-regular"].mode-selected {
+    border-color: #2ecc71;
+    background-color: rgba(46,204,113,0.15);
+}
+
+.mode-btn[data-mode="foot-walking"].mode-selected {
+    border-color: #9b59b6;
+    background-color: rgba(155, 89, 182, 0.15);
+}
+
+.field-group {
+    position: relative;
+    margin-top: 10px;
+}
+
+.input-with-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.input-with-button input {
+    flex: 1;
+}
+
+#use-location-btn {
+    background-color: #ff4500;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    width: 36px;
+    height: 34px;
+    margin-top: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    flex-shrink: 0;
+    transition: background-color 0.3s ease;
+}
+
+#use-location-btn:hover {
+    background-color: #ff6347;
+}
+
+#use-location-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
