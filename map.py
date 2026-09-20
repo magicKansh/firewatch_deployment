@@ -4,8 +4,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import plotly.io as pio
 import os
+from fire_data import load_fires
 
 app = FastAPI()
 
@@ -18,8 +20,7 @@ def health_check():
 
 @app.get("/", response_class=HTMLResponse)
 def firewatch(request: Request):
-    data_path = os.path.join(os.path.dirname(__file__), 'data', 'fires.csv')
-    data = pd.read_csv(data_path)
+    data = load_fires()
 
     data['longitude'] = data['longitude'].astype(str).str.replace('−', '-').astype(float)
     data = data.dropna(subset=['mag'])
@@ -28,57 +29,58 @@ def firewatch(request: Request):
     center_lat = data['latitude'].mean()
     center_lon = data['longitude'].mean()
 
-    fig = px.scatter_map(
-        data,
-        lat='latitude',
-        lon='longitude',
-        size='mag',
-        size_max=35,
-        color_discrete_sequence=['rgba(255, 69, 0, 0.25)'],
-        center=dict(lat=center_lat, lon=center_lon),
-        zoom=6,
-        height=None
-    )
+    fig = go.Figure()
 
-    fig.update_traces(hoverinfo='skip', hovertemplate=None)
+    reported = data[data['source'] == 'reported']
+    if not reported.empty:
+        fig.add_trace(go.Scattermap(
+            lat=reported['latitude'], lon=reported['longitude'],
+            mode = 'markers',
+            marker=dict(size=reported['mag'] * 7, color='rgba(255, 69, 0, 0.25)'),
+            hoverinfo='skip', showlegend=False
+        ))
+        fig.add_trace(go.Scattermap(
+            lat=reported['latitude'], lon=reported['longitude'],
+            mode='markers',
+            marker=dict(size=9, color = reported['mag'], colorscale = 'reds', cmin=1, cmax=5, symbol='circle'),
+            text=reported['place'],
+            hovertemplate='Reported: %{text}<extra></extra>',
+            name='Reported fires',
+            showlegend = True
+        ))
+    satellite = data[data['source'] == 'satellite']
+    if not satellite.empty:
+        fig.add_trace(go.Scattermap(
+            lat=satellite['latitude'], lon=satellite['longitude'],
+            mode='markers',
+            marker=dict(size=10, color = '#ffd166', symbol = 'triangle'),
+            text=satellite['place'],
+            hovertemplate='Satellite detection<extra></extra>',
+            name='Satellite fires',
+            showlegend = True
 
-    core_dots = px.scatter_map(
-        data,
-        lat='latitude',
-        lon='longitude',
-        color='mag',
-        hover_name='place',
-        color_continuous_scale='reds',
-        range_color=[1, 5],
-        size_max=10
-    )
 
-    for trace in core_dots.data:
-        fig.add_trace(trace)
+        ))
 
     fig.update_layout(
+        map=dict(
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=6,
+            style="open-street-map"
+        ),
         autosize=True,
         margin=dict(l=0, r=0, t=0, b=0),
-        coloraxis=core_dots.layout.coloraxis,
-        coloraxis_colorbar=dict(
-            title="<b>Magnitude</b><br>",
-            title_font=dict(color="white", size=14),
-            tickfont=dict(color="white", size=12),
-            len=0.4,
-            thickness=15,
-            x=0.93,
-            y=0.05,
-            xanchor="right",
-            yanchor="bottom",
-            bgcolor="rgba(0, 0, 0, 0.6)",
-            outlinecolor="rgba(255, 255, 255, 0.2)",
-            outlinewidth=1,
-            title_side="top",
-            ticklen=8,
-            tickcolor="rgba(255, 255, 255, 0.5)"
+        legend=dict(
+            bgcolor="rgba(0,0,0,0.6)",
+            bordercolor="rgba(255,255,255,0.2)",
+            borderwidth=1,
+            font=dict(color="white", size=12),
+            x=0.01,
+            y=0.01,
+            xanchor="left",
+            yanchor="bottom"
         )
     )
-
     graph_html = pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
     return templates.TemplateResponse(request, "index.html", {"graph_html": graph_html})
 
