@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let modeTraceIndices = {};
     let allRouteTraceIndices = [];
     let routeSteps = {};
+    let routeSummaries = {};
     let markersDrawn = false;
 
     const plotDivInit = document.querySelector(".plotly-graph-div")
@@ -37,14 +38,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    function formatDistance(meters) {
+        if (meters == null) return "N/A";
+        return meters >= 1000 ?`${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+    }
+
     function renderDirections(mode) {
         const panel = document.getElementById("directions-panel");
         const list = document.getElementById("directions-list");
+        const summaryEl = document.getElementById("directions-summary");
         const steps = routeSteps[mode];
+        const summary = routeSummaries[mode];
 
         if (!steps || steps.length === 0) {
             panel.style.display = "none";
             return;
+        }
+
+        if (summary) {
+            summaryEl.textContent =  `${MODE_LABELS[mode]} · ${formatDistance(summary.distance)} · ${formatDuration(summary.duration)}`;
+            summaryEl.style.display = "block";
+        } else {
+            summaryEl.style.display = "none";
         }
 
         list.innerHTML = "";
@@ -58,6 +73,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         panel.style.display = "block";
     }
+
+    document.getElementById("directions-close").onclick = () => {
+        document.getElementById("directions-panel").style.display = "none";
+    };
 
     function formatDuration(seconds) {
         if (seconds == null) return "N/A";
@@ -231,124 +250,128 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const loading = document.getElementById("loading");
+        const submitBtn = document.getElementById("gps-submit");
         loading.style.display = "block";
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Calculating..."
         clearRoutes();
-
-        let data;
         try {
-            const res = await fetch("/routes", {
-                method: "POST",
-                headers: { "Content-Type": "application/json"},
-                body: JSON.stringify({ start, end })
-            });
-            data = await res.json();
-        } catch (err) {
-            alert("Could not calculate routes.");
-            loading.style.display = "none";
-            return;
-        }
-
-        if(data.error) {
-            alert(data.error);
-            loading.style.display = "none";
-            return;
-        }
-
-        const plotDiv = document.querySelector(".plotly-graph-div");
-        const selector = document.getElementById("mode-selector");
-        selector.style.display = "flex";
-
-        let allLats = [];
-        let allLons = [];
-        let anySuccess = false;
-
-        MODE_ORDER.forEach(mode => {
-            const result = data[mode];
-            const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
-            const timeEl = btn.querySelector(".mode-time");
-
-            if (!result || result.error) {
-                timeEl.textContent = "N/A";
-                btn.disabled = true;
-                btn.classList.add("mode-unavailable");
+            let data;
+            try {
+                const res = await fetch("/routes", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json"},
+                    body: JSON.stringify({ start, end })
+                });
+                data = await res.json();
+            } catch (err) {
+                alert("Could not calculate routes.");
                 return;
             }
 
-            btn.disabled = false;
-            btn.classList.remove("mode-unavailable");
-            timeEl.textContent = formatDuration(result.duration);
-            anySuccess = true;
-            allLats.push(...result.lat);
-            allLons.push(...result.lon);
-
-            const color = MODE_COLORS[mode];
-            const isSelected = mode === selectedMode;
-
-            if(!markersDrawn && result.start && result.end) {
-                const startMarker = {
-                    type: "scattermap",
-                    lat: [result.start.lat],
-                    lon: [result.start.lon],
-                    mode: "markers",
-                    marker: { size: 14, color: "#2ecc71"},
-                    hovertemplate: `Start: ${start}<extra></extra>`,
-                    showlegend: false
-                };
-                const endMarker = {
-                    type: "scattermap",
-                    lat: [result.end.lat],
-                    lon: [result.end.lon],
-                    mode: "markers",
-                    marker: { size: 14, color: "#e74c3c"},
-                    hovertemplate: `Destination: ${end}<extra></extra>`,
-                    showlegend: false
-                };
-                const markerStartIdx = plotDiv.data.length;
-                Plotly.addTraces(plotDiv, [startMarker, endMarker ]);
-                allRouteTraceIndices.push(markerStartIdx, markerStartIdx + 1);
-                markersDrawn = true;
+            if(data.error) {
+                alert(data.error);
+                return;
             }
-            routeSteps[mode] = result.steps || [];
-            const startIdx = plotDiv.data.length;            
 
-            const halo = {
-                type: "scattermap",
-                lat: result.lat,
-                lon: result.lon,
-                mode: "lines",
-                line: {color: "white", width: 8},
-                hoverinfo: "skip",
-                showlegend: false,
-                opacity: isSelected ? 0.9 : 0.25
-            };
+            const plotDiv = document.querySelector(".plotly-graph-div");
+            const selector = document.getElementById("mode-selector");
+            selector.style.display = "flex";
 
-            const line = {
-                type: "scattermap",
-                lat: result.lat,
-                lon: result.lon,
-                mode: "lines",
-                line: { color: color, width: 4},
-                hovertemplate: `${MODE_LABELS[mode]} route from ${start} to ${end}<extra></extra>`,
-                showlegend: false,
-                opacity: isSelected ? 1 : 0.35
-            };
+            let allLats = [];
+            let allLons = [];
+            let anySuccess = false;
+
+            MODE_ORDER.forEach(mode => {
+                const result = data[mode];
+                const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
+                const timeEl = btn.querySelector(".mode-time");
+
+                if (!result || result.error) {
+                    timeEl.textContent = "N/A";
+                    btn.disabled = true;
+                    btn.classList.add("mode-unavailable");
+                    return;
+                }
+
+                btn.disabled = false;
+                btn.classList.remove("mode-unavailable");
+                timeEl.textContent = formatDuration(result.duration);
+                anySuccess = true;
+                allLats.push(...result.lat);
+                allLons.push(...result.lon);
+
+                const color = MODE_COLORS[mode];
+                const isSelected = mode === selectedMode;
+
+                if(!markersDrawn && result.start && result.end) {
+                    const startMarker = {
+                        type: "scattermap",
+                        lat: [result.start.lat],
+                        lon: [result.start.lon],
+                        mode: "markers",
+                        marker: { size: 14, color: "#2ecc71"},
+                        hovertemplate: `Start: ${start}<extra></extra>`,
+                        showlegend: false
+                    };
+                    const endMarker = {
+                        type: "scattermap",
+                        lat: [result.end.lat],
+                        lon: [result.end.lon],
+                        mode: "markers",
+                        marker: { size: 14, color: "#e74c3c"},
+                        hovertemplate: `Destination: ${end}<extra></extra>`,
+                        showlegend: false
+                    };
+                    const markerStartIdx = plotDiv.data.length;
+                    Plotly.addTraces(plotDiv, [startMarker, endMarker ]);
+                    allRouteTraceIndices.push(markerStartIdx, markerStartIdx + 1);
+                    markersDrawn = true;
+                }
+                routeSteps[mode] = result.steps || [];
+                const startIdx = plotDiv.data.length;            
+
+                const halo = {
+                    type: "scattermap",
+                    lat: result.lat,
+                    lon: result.lon,
+                    mode: "lines",
+                    line: {color: "white", width: 8},
+                    hoverinfo: "skip",
+                    showlegend: false,
+                    opacity: isSelected ? 0.9 : 0.25
+                };
+
+                const line = {
+                    type: "scattermap",
+                    lat: result.lat,
+                    lon: result.lon,
+                    mode: "lines",
+                    line: { color: color, width: 4},
+                    hovertemplate: `${MODE_LABELS[mode]} route from ${start} to ${end}<extra></extra>`,
+                    showlegend: false,
+                    opacity: isSelected ? 1 : 0.35
+                };
 
 
-            Plotly.addTraces(plotDiv, [halo, line]);
-            modeTraceIndices[mode] = [startIdx, startIdx + 1];
-            allRouteTraceIndices.push(startIdx, startIdx + 1);
-        });
+                Plotly.addTraces(plotDiv, [halo, line]);
+                modeTraceIndices[mode] = [startIdx, startIdx + 1];
+                allRouteTraceIndices.push(startIdx, startIdx + 1);
+            });
 
-        if(!anySuccess) {
-            alert("No safe route could be found for any travel mode, try a different destination");
-            loading.style.display = "none";
-            return;
-        }
+            if(!anySuccess) {
+                alert("No safe route could be found for any travel mode, try a different destination");
+                return;
+            }
 
-        const bounds = computeSquareBounds(allLats, allLons);
-        Plotly.relayout(plotDiv, { "map.bounds": bounds });
-        renderDirections(selectedMode);  
-        loading.style.display = "none";
+            const bounds = computeSquareBounds(allLats, allLons);
+            Plotly.relayout(plotDiv, { "map.bounds": bounds });
+            renderDirections(selectedMode);  
+        } finally {
+            loading.style.display = "none"; 
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Get Route";
+        }   
     };
 
     document.getElementById("clear-route").onclick = clearRoutes;
@@ -390,9 +413,9 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
 
         <div id="mode-selector" style="display:none;">
-            <button class="mode-btn" data-mode="driving-car">Driving<br><span class="mode-time">--</span></button>
-            <button class="mode-btn" data-mode="cycling-regular">Biking<br><span class="mode-time">--</span></button>
-            <button class="mode-btn" data-mode="foot-walking">Walking<br><span class="mode-time">--</span></button>
+            <button class="mode-btn" data-mode="driving-car"><span class="mode-label">Driving</span><br><span class="mode-time">--</span></button>
+            <button class="mode-btn" data-mode="cycling-regular"><span class="mode-label">Biking</span><br><span class="mode-time">--</span></button>
+            <button class="mode-btn" data-mode="foot-walking"><span class="mode-label">Walking</span><br><span class="mode-time">--</span></button>
         </div>
         <button id="gps-submit">Get Route</button>
 
@@ -426,7 +449,11 @@ document.addEventListener("DOMContentLoaded", () => {
         Clear Route
     </button>
     <div id="directions-panel" style="display:none;">
-        <h3>Directions</h3>
+        <div id ="directions-header">
+            <h3>Directions</h3>
+            <button id="directions-close" type="button" title="Close directions"> x </button>
+        </div>
+        <div id = "directions-summary"></div>
         <ol id="directions-list"></ol>
     </div>
     {{ graph_html|safe }}
