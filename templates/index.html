@@ -6,55 +6,42 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
+
+    const MODE_COLORS = {
+        "driving-car": "#ff4500",   // FIXED: was "ff4500" — missing the leading "#", so this was an invalid CSS color and the line would not render the intended orange
+        "cycling-regular": "#2ecc71",   // FIXED: same issue, missing "#"
+        "foot-walking": "#9b59b6"   // FIXED: same issue, missing "#"
+    }
+
+    const MODE_LABELS = {
+        "driving-car": "Driving",
+        "cycling-regular": "Biking",
+        "foot-walking": "Walking"
+    }
+    const MODE_ORDER = ["driving-car", "cycling-regular", "foot-walking"];
+
     let selectedMode = "driving-car";
+    let modeTraceIndices = {};
+    let allRouteTraceIndices = [];
+
+    const plotDivInit = document.querySelector(".plotly-graph-div")
+    if (plotDivInit) {
+        Plotly.relayout(plotDivInit, {
+            hoverlabel: {
+                bgcolor: "rgba(10,10,10,0.92)",
+                bordercolor: "#ff4500",
+                font: {color: "white", family: "Open Sans, sans-serif", size: 13}
+            }
+        });
+    }
 
     function formatDuration(seconds) {
         if (seconds == null) return "N/A";
         const mins = Math.round(seconds / 60);
-        if (mins < 60) return `${mins} min`;  // FIXED: was "min" (undefined variable, should be "mins") AND was using single quotes '...' instead of backticks `...`, so it printed the literal text "${mins} min" instead of interpolating
+        if (mins < 60) return `${mins} min`;  
         const hrs = Math.floor(mins / 60);
-        return `${hrs} hr ${mins % 60} min`;  // FIXED: same single-quote-vs-backtick issue
+        return `${hrs} hr ${mins % 60} min`;  
     }
-
-    async function fetchEstimates() {
-        const start = document.getElementById("start").value;
-        const end = document.getElementById("end").value;
-        if (!start || !end) return;
-
-        const selector = document.getElementById("mode-selector");
-        selector.style.display = "flex";
-        document.querySelectorAll(".mode-time").forEach(el => el.textContent = "...");
-
-        try {
-            // FIXED: was using single quotes (no interpolation), missing "&" between params (had "$end=" instead of "&end="),
-            // and "encodeURLComponent" was misspelled (should be encodeURIComponent)
-            const res = await fetch(`/estimates?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
-            const data = await res.json();
-
-            document.querySelectorAll(".mode-btn").forEach(btn => {  // FIXED: was "mode-btn" missing the leading "." — querySelectorAll needs a CSS selector, so this matched nothing
-                const mode = btn.dataset.mode;
-                const timeEl = btn.querySelector(".mode-time");
-                if (data[mode] && !data[mode].error) {
-                    timeEl.textContent = formatDuration(data[mode].duration);
-                } else {
-                    timeEl.textContent = "N/A";
-                }
-            });
-        } catch (err) {
-            document.querySelectorAll(".mode-time").forEach(el => el.textContent = "N/A");
-        }
-    }
-
-    document.getElementById("start").addEventListener("blur", fetchEstimates);
-    document.getElementById("end").addEventListener("blur", fetchEstimates);
-
-    document.querySelectorAll(".mode-btn").forEach(btn => {
-        btn.onclick = () => {
-            selectedMode = btn.dataset.mode;
-            document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("mode-selected"));
-            btn.classList.add("mode-selected");
-        };
-    });
 
     function computeSquareBounds(lats, lons, paddingFactor = 0.4) {
         const minLat = Math.min(...lats);
@@ -137,72 +124,201 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setupAutocomplete("start", "start-suggestions");
     setupAutocomplete("end", "end-suggestions");
+    
+    document.getElementById("use-location-btn").onclick = () => {
+        if (!navigator.geolocation) {
+            alert("Geolocation is not supported by your brower.");
+            return;
+        }
+        
+        const btn = document.getElementById("use-location-btn");
+        btn.disabled = true;
+        btn.textContent = "...";
+
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+        // FIXED: was "getCurrectPostion" (typo, two letters wrong) — this method
+        // doesn't exist on navigator.geolocation, so this line threw
+        // "TypeError: navigator.geolocation.getCurrectPostion is not a function"
+        // immediately, meaning the whole location button did nothing at all.
+            const { latitude, longitude } = pos.coords;
+            try{
+                const res = await fetch(`/reverse?lat=${latitude}&lon=${longitude}`);
+                // FIXED: was using single quotes '...' instead of backticks `...`,
+                // so ${latitude} and ${longitude} were NOT interpolated — it sent
+                // the literal string "/reverse?lat=${latitude}&lon={longitude}" as
+                // the URL. Also fixed a second bug: "{longitude}" was missing its
+                // leading "$", so even with backticks this wouldn't have worked.
+                const data = await res.json();
+
+                document.getElementById("start").value = data.label;
+
+                const plotDiv = document.querySelector(".plotly-graph-div");
+                Plotly.relayout(plotDiv, {
+                    "map.center": {lat: latitude, lon: longitude},
+                    "map.zoom": 12
+                });
+            } catch (err){
+                document.getElementById("start").value = `${latitude}, ${longitude}`;
+                // FIXED: was single quotes '...' instead of backticks `...`,
+                // so this displayed the literal text "${latitude}, ${longitude}"
+                // instead of the actual coordinates.
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "📍";
+            }
+        }, (err) => {
+            alert("Could not get your location: " + err.message);
+            btn.disabled = false;
+            btn.textContent = "📍"; 
+        });
+    };
+
+    function highlightSelectedMode() {
+        const plotDiv = document.querySelector(".plotly-graph-div");
+        for (const [mode, indices] of Object.entries(modeTraceIndices)) {
+            const isSelected = mode === selectedMode;
+            Plotly.restyle(plotDiv, { opacity: isSelected ? 0.9 : 0.25 }, [indices[0]]);
+            Plotly.restyle(plotDiv, { opacity: isSelected ? 1 : 0.35 }, [indices[1]]);
+        }
+    }
+
+    document.querySelectorAll(".mode-btn").forEach(btn => {
+        btn.onclick = () => {
+            if (btn.disabled) return;
+            selectedMode = btn.dataset.mode;
+            document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("mode-selected"));
+            btn.classList.add("mode-selected");
+            highlightSelectedMode();
+        };
+    });
+
+    function clearRoutes() {
+        const plotDiv = document.querySelector(".plotly-graph-div");
+        if (allRouteTraceIndices.length > 0) {
+            Plotly.deleteTraces(plotDiv, allRouteTraceIndices);
+        }
+        allRouteTraceIndices = [];
+        modeTraceIndices = {};
+        document.querySelectorAll(".mode-time").forEach(el => el.textContent = "--");
+    }
 
     document.getElementById("gps-submit").onclick = async () => {
         const start = document.getElementById("start").value;
         const end = document.getElementById("end").value;
 
+        if (!start || !end) {
+            alert("Please enter both a starting location and a destination.");
+            return;
+        }
+
         const loading = document.getElementById("loading");
         loading.style.display = "block";
+        clearRoutes();
 
-        let route;
+        let data;
         try {
-            const res = await fetch("/route", {
+            const res = await fetch("/routes", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ start, end, mode: selectedMode })
+                headers: { "Content-Type": "application/json"},
+                body: JSON.stringify({ start, end })
             });
-
-            route = await res.json();
-
-            if (!route.lat || route.lat.length === 0) {
-                alert(route.error || "No safe route found. Try a different destination.");
-                loading.style.display = "none";
-                return;
-            }
-
-            const routeHalo = {
-                type: "scattermap",
-                lat: route.lat,
-                lon: route.lon,
-                mode: "lines",
-                line: { color: "white", width: 8 },
-                hoverinfo: "skip",
-                showlegend: false,  // ADDED: this trace also has a "name"-less default, but explicitly hiding it keeps the legend fully off
-                name: "Route Halo"
-            };
-
-            const routeTrace = {
-                type: "scattermap",
-                lat: route.lat,
-                lon: route.lon,
-                mode: "lines",
-                line: { color: "#1e90ff", width: 4 },
-                name: `Route from ${start} to ${end}`,  // FIXED: was single quotes '...' (no interpolation) instead of backticks
-                hoverinfo: "name",
-                showlegend: false
-            };
-
-            const plotDiv = document.querySelector(".plotly-graph-div");
-            Plotly.addTraces(plotDiv, [routeHalo, routeTrace]);
-
-            const bounds = computeSquareBounds(route.lat, route.lon);
-            Plotly.relayout(plotDiv, { "map.bounds": bounds });
-
+            data = await res.json();
         } catch (err) {
-            alert("Could not calculate a safe route.");
+            alert("Could not calculate routes.");
             loading.style.display = "none";
             return;
         }
 
+        if(data.error) {
+            alert(data.error);
+            loading.style.display = "none";
+            return;
+        }
+
+        const plotDiv = document.querySelector(".plotly-graph-div");
+        const selector = document.getElementById("mode-selector");
+        selector.style.display = "flex";
+
+        let allLats = [];
+        let allLons = [];
+        let anySuccess = false;
+
+        MODE_ORDER.forEach(mode => {
+            const result = data[mode];
+            const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
+            // FIXED: was single quotes '.mode-btn[data-mode="${mode}"]' instead of
+            // backticks — the ${mode} placeholder never got interpolated, so this
+            // literally searched for an element matching the selector text
+            // '.mode-btn[data-mode="${mode}"]' (with the dollar sign and braces as
+            // literal characters), which always returned null. The very next line
+            // — btn.querySelector(".mode-time") — then threw "Cannot read
+            // properties of null", meaning routes were calculated successfully but
+            // this loop crashed and nothing ever got drawn on the map.
+            const timeEl = btn.querySelector(".mode-time");
+
+            if (!result || result.error) {
+                timeEl.textContent = "N/A";
+                btn.disabled = true;
+                btn.classList.add("mode-unavailable");
+                return;
+            }
+
+            btn.disabled = false;
+            btn.classList.remove("mode-unavailable");
+            timeEl.textContent = formatDuration(result.duration);
+            anySuccess = true;
+            allLats.push(...result.lat);
+            allLons.push(...result.lon);
+
+            const color = MODE_COLORS[mode];
+            const isSelected = mode === selectedMode;
+            const startIdx = plotDiv.data.length;
+
+            const halo = {
+                type: "scattermap",
+                lat: result.lat,
+                lon: result.lon,
+                mode: "lines",
+                line: {color: "white", width: 8},
+                hoverinfo: "skip",
+                showlegend: false,
+                opacity: isSelected ? 0.9 : 0.25
+            };
+
+            const line = {
+                type: "scattermap",
+                lat: result.lat,
+                lon: result.lon,
+                mode: "lines",
+                line: { color: color, width: 4},
+                hovertemplate: `${MODE_LABELS[mode]} route from ${start} to ${end}<extra></extra>`,
+                // FIXED: was single quotes '...' instead of backticks `...` — none
+                // of the ${...} placeholders were interpolated, so hovering the
+                // line would have shown the literal text
+                // "${MODE_LABELS[mode]} route from ${start} to ${end}<extra></extra>"
+                showlegend: false,
+                opacity: isSelected ? 1 : 0.35
+            };
+
+            Plotly.addTraces(plotDiv, [halo, line]);
+            modeTraceIndices[mode] = [startIdx, startIdx + 1];
+            allRouteTraceIndices.push(startIdx, startIdx + 1);
+        });
+
+        if(!anySuccess) {
+            alert("No safe route could be found for any travel mode, try a different destination");
+            loading.style.display = "none";
+            return;
+        }
+
+        const bounds = computeSquareBounds(allLats, allLons);
+        Plotly.relayout(plotDiv, { "map.bounds": bounds });
+
         loading.style.display = "none";
     };
 
-    document.getElementById("clear-route").onclick = () => {
-        const plotDiv = document.querySelector(".plotly-graph-div");
-        const n = plotDiv.data.length;
-        Plotly.deleteTraces(plotDiv, [n - 2, n - 1]);
-    };
+    document.getElementById("clear-route").onclick = clearRoutes;
+
 });
 </script>
 
@@ -223,16 +339,31 @@ document.addEventListener("DOMContentLoaded", () => {
     </div>
     <div id="gps-panel">
         <h3>Navigation</h3>
-        <label for ="start">Your Location:</label>
-        <input type="text" id="start" placeholder="Enter current location" autocomplete="off">
-        <div class="suggestions" id="start-suggestions"></div>
 
-        <label for="end">Destination:</label>
-        <input type="text" id="end" placeholder="Enter destination" autocomplete="off">
-        <div class="suggestions" id="end-suggestions"></div>
+        <!-- FIXED: wrapped "start" in .field-group so its .suggestions dropdown
+             positions relative to this input specifically, rather than to
+             #gps-panel as a whole (its previous nearest positioned ancestor).
+             Without this wrapper, both the start and end dropdowns would
+             anchor to the top of the entire panel instead of appearing
+             directly under their own input. Also added the 📍 button back,
+             since it's referenced by "use-location-btn" in the script above
+             but was missing from this version's HTML entirely — the location
+             feature had no button to click. -->
+        <div class="field-group">
+            <label for="start">Your Location:</label>
+            <div class="input-with-button">
+                <input type="text" id="start" placeholder="Enter current location" autocomplete="off">
+                <button id="use-location-btn" type="button" title="Use my current location">📍</button>
+            </div>
+            <div class="suggestions" id="start-suggestions"></div>
+        </div>
 
-        <!-- FIXED: each button was missing the closing ">" after data-mode="...", so "CAR"/"BIKE"/"WALK"
-             were being parsed as stray invalid HTML attributes instead of visible button text -->
+        <div class="field-group">
+            <label for="end">Destination:</label>
+            <input type="text" id="end" placeholder="Enter destination" autocomplete="off">
+            <div class="suggestions" id="end-suggestions"></div>
+        </div>
+
         <div id="mode-selector" style="display:none;">
             <button class="mode-btn" data-mode="driving-car">CAR<br><span class="mode-time">--</span></button>
             <button class="mode-btn" data-mode="cycling-regular">BIKE<br><span class="mode-time">--</span></button>
@@ -253,7 +384,7 @@ document.addEventListener("DOMContentLoaded", () => {
         font-size: 14px;
         z-index: 9999;
     "> 
-        Calculating safe route...
+        Calculating safe routes...
     </div>
 
     <button id ="clear-route" style="
