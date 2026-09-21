@@ -2,12 +2,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import plotly.graph_objects as go
 import plotly.io as pio
 import pandas as pd
-from fire_data import load_fires
+from fire_data import load_fires, get_last_updated
 
 app = FastAPI()
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -32,21 +39,20 @@ def firewatch(request: Request):
 
     reported = data[data['source'] == 'reported']
     if not reported.empty:
-        # soft translucent halo, unchanged
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
             mode='markers',
             marker=dict(size=reported['mag'] * 7, color='rgba(255, 69, 0, 0.25)'),
-            hoverinfo='skip', showlegend=False
+            hoverinfo='skip', showlegend=False,
+            legendgroup='reported'
         ))
-        # white outline ring, sits underneath the colored dot
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
             mode='markers',
             marker=dict(size=12, color='white'),
-            hoverinfo='skip', showlegend=False
+            hoverinfo='skip', showlegend=False,
+            legendgroup='reported'
         ))
-        # the actual colored dot, on top
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
             mode='markers',
@@ -54,19 +60,19 @@ def firewatch(request: Request):
             text=reported['place'],
             hovertemplate='Reported: %{text}<extra></extra>',
             name='Reported fires',
-            showlegend=True
+            showlegend=True,
+            legendgroup='reported'
         ))
 
     satellite = data[data['source'] == 'satellite']
     if not satellite.empty:
-        # dark outline ring, sits underneath the yellow triangle
         fig.add_trace(go.Scattermap(
             lat=satellite['latitude'], lon=satellite['longitude'],
             mode='markers',
-            marker=dict(size=13, color='#1a1a1a', symbol='triangle'),
-            hoverinfo='skip', showlegend=False
+            marker=dict(size=13, color='white', symbol='triangle'),
+            hoverinfo='skip', showlegend=False,
+            legendgroup='satellite'
         ))
-        # the actual satellite marker, on top
         fig.add_trace(go.Scattermap(
             lat=satellite['latitude'], lon=satellite['longitude'],
             mode='markers',
@@ -74,23 +80,28 @@ def firewatch(request: Request):
             text=satellite['place'],
             hovertemplate='Satellite detection<extra></extra>',
             name='Satellite fires',
-            showlegend=True
+            showlegend=True,
+            legendgroup='satellite'
         ))
 
     annotations = []
+    last_updated = get_last_updated()
+    footer_text = f"Data as of {last_updated}" if last_updated else "Data loading..."
     if satellite.empty:
-        annotations.append(dict(
-            text="No active satellite fire detections nearby right now",
-            xref="paper", yref="paper",
-            x=0.99, y=0.99,
-            xanchor="right", yanchor="top",
-            showarrow=False,
-            font=dict(color="white", size=12, family="Open Sans, sans-serif"),
-            bgcolor="rgba(0,0,0,0.6)",
-            bordercolor="rgba(255,255,255,0.2)",
-            borderwidth=1,
-            borderpad=6
-        ))
+        footer_text += " · No active satellite detections nearby"
+
+    annotations.append(dict(
+        text=footer_text,
+        xref="paper", yref="paper",
+        x=0.99, y=0.99,
+        xanchor="right", yanchor="top",
+        showarrow=False,
+        font=dict(color="white", size=12, family="Open Sans, sans-serif"),
+        bgcolor="rgba(0,0,0,0.6)",
+        bordercolor="rgba(255,255,255,0.2)",
+        borderwidth=1,
+        borderpad=6
+    ))
 
     fig.update_layout(
         map=dict(
