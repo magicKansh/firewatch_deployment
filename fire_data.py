@@ -18,6 +18,7 @@ def _load_reported_fires():
 
 def _load_satellite_fires(reported_df):
     if not FIRMS_API_KEY or reported_df.empty:
+        print("FIRMS DEBUG: missing key or empty reported_df, skipping")
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
     pad = 0.5
@@ -31,15 +32,21 @@ def _load_satellite_fires(reported_df):
         f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/"
         f"{FIRMS_API_KEY}/VIIRS_SNPP_NRT/{area}/1"
     )
+    print("FIRMS DEBUG: requesting", url.replace(FIRMS_API_KEY, "***KEY***"))
 
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
+        print("FIRMS DEBUG: raw response text (first 500 chars):", response.text[:500])
         df = pd.read_csv(StringIO(response.text))
-    except Exception:
+        print("FIRMS DEBUG: parsed columns:", list(df.columns))
+        print("FIRMS DEBUG: row count:", len(df))
+    except Exception as e:
+        print("FIRMS DEBUG: exception occurred:", repr(e))
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
     if df.empty or 'latitude' not in df.columns:
+        print("FIRMS DEBUG: empty or missing latitude column")
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
     df['mag'] = (df.get('frp', 1) / df.get('frp', 1).max() * 5).clip(lower=0.5, upper=5)
