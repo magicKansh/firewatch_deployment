@@ -21,7 +21,7 @@ def _load_satellite_fires(reported_df):
         print("FIRMS DEBUG: missing key or empty reported_df, skipping")
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
-    pad = 0.5
+    pad = 2.0
     west = reported_df['longitude'].min() - pad
     east = reported_df['longitude'].max() + pad
     south = reported_df['latitude'].min() - pad
