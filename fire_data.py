@@ -3,22 +3,26 @@ import time
 from io import StringIO
 import pandas as pd
 import requests
+from shapely.geometry import Point, mapping
+from shapely.ops import unary_union
 
 FIRMS_API_KEY = os.getenv("FIRMS_API_KEY")
 
-_cache = {"data": None, "timestamp": 0}
+_cache = {"data": None, "avoid_geojson": None, "timestamp": 0}
 CACHE_TTL_SECONDS = 900
 
 def _load_reported_fires():
-    data_path = os.path.join(os.path.dirname(__file__), 'data', 'fires.csv')
-    data = pd.read_csv(data_path)
-    data['mag'] = pd.to_numeric(data['mag'], errors='coerce')
-    data['source'] = 'reported'
-    return data[['latitude', 'longitude', 'mag', 'place', 'source']]
+    try:
+        data_path = os.path.join(os.path.dirname(__file__), 'data', 'fires.csv')
+        data = pd.read_csv(data_path)
+        data['mag'] = pd.to_numeric(data['mag'], errors='coerce')
+        data['source'] = 'reported'
+        return data[['latitude', 'longitude', 'mag', 'place', 'source']]
+    except Exception:
+        return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
 def _load_satellite_fires(reported_df):
     if not FIRMS_API_KEY or reported_df.empty:
-        print("FIRMS DEBUG: missing key or empty reported_df, skipping")
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
     pad = 2.0
@@ -32,21 +36,15 @@ def _load_satellite_fires(reported_df):
         f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/"
         f"{FIRMS_API_KEY}/VIIRS_SNPP_NRT/{area}/1"
     )
-    print("FIRMS DEBUG: requesting", url.replace(FIRMS_API_KEY, "***KEY***"))
 
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
-        print("FIRMS DEBUG: raw response text (first 500 chars):", response.text[:500])
         df = pd.read_csv(StringIO(response.text))
-        print("FIRMS DEBUG: parsed columns:", list(df.columns))
-        print("FIRMS DEBUG: row count:", len(df))
-    except Exception as e:
-        print("FIRMS DEBUG: exception occurred:", repr(e))
+    except Exception:
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
     if df.empty or 'latitude' not in df.columns:
-        print("FIRMS DEBUG: empty or missing latitude column")
         return pd.DataFrame(columns=['latitude', 'longitude', 'mag', 'place', 'source'])
 
     df['mag'] = (df.get('frp', 1) / df.get('frp', 1).max() * 5).clip(lower=0.5, upper=5)
@@ -68,5 +66,31 @@ def load_fires(use_cache=True):
     combined = combined.dropna(subset=['latitude', 'longitude'])
 
     _cache["data"] = combined
+    _cache["avoid_geojson"] = None  # invalidate stale polygon cache when fire data refreshes
     _cache["timestamp"] = now
     return combined
+
+def get_avoid_geojson():
+    data = load_fires()
+
+    if _cache["avoid_geojson"] is not None:
+        return _cache["avoid_geojson"]
+
+    fire_polygons = [
+        Point(row['longitude'], row['latitude']).buffer(0.01)
+        for _, row in data.iterrows()
+    ]
+
+    if not fire_polygons:
+        _cache["avoid_geojson"] = None
+        return None
+
+    avoid_area = unary_union(fire_polygons)
+    geojson = mapping(avoid_area)
+    _cache["avoid_geojson"] = geojson
+    return geojson
+
+def get_last_updated():
+    if _cache["timestamp"] == 0:
+        return None
+    return time.strftime("%I:%M %p", time.localtime(_cache["timestamp"]))
