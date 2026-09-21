@@ -329,6 +329,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     markersDrawn = true;
                 }
                 routeSteps[mode] = result.steps || [];
+                routeSummaries[mode] = { duration: result.duration, distance: result.distance };
                 const startIdx = plotDiv.data.length;            
 
                 const halo = {
@@ -401,7 +402,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <label for="start">Your Location:</label>
             <div class="input-with-button">
                 <input type="text" id="start" placeholder="Enter current location" autocomplete="off">
-                <button id="use-location-btn" type="button" title="Use my current location">📍</button>
+                <button id="use-location-btn" type="button" title="Use my current location" aria-label="Use my current location">📍</button>
             </div>
             <div class="suggestions" id="start-suggestions"></div>
         </div>
@@ -451,7 +452,7 @@ document.addEventListener("DOMContentLoaded", () => {
     <div id="directions-panel" style="display:none;">
         <div id ="directions-header">
             <h3>Directions</h3>
-            <button id="directions-close" type="button" title="Close directions"> x </button>
+            <button id="directions-close" type="button" title="Close directions" aria-label="Close directions">×</button>
         </div>
         <div id = "directions-summary"></div>
         <ol id="directions-list"></ol>
