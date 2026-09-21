@@ -32,12 +32,21 @@ def firewatch(request: Request):
 
     reported = data[data['source'] == 'reported']
     if not reported.empty:
+        # soft translucent halo, unchanged
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
             mode='markers',
             marker=dict(size=reported['mag'] * 7, color='rgba(255, 69, 0, 0.25)'),
             hoverinfo='skip', showlegend=False
         ))
+        # white outline ring, sits underneath the colored dot
+        fig.add_trace(go.Scattermap(
+            lat=reported['latitude'], lon=reported['longitude'],
+            mode='markers',
+            marker=dict(size=12, color='white'),
+            hoverinfo='skip', showlegend=False
+        ))
+        # the actual colored dot, on top
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
             mode='markers',
@@ -50,6 +59,14 @@ def firewatch(request: Request):
 
     satellite = data[data['source'] == 'satellite']
     if not satellite.empty:
+        # dark outline ring, sits underneath the yellow triangle
+        fig.add_trace(go.Scattermap(
+            lat=satellite['latitude'], lon=satellite['longitude'],
+            mode='markers',
+            marker=dict(size=13, color='#1a1a1a', symbol='triangle'),
+            hoverinfo='skip', showlegend=False
+        ))
+        # the actual satellite marker, on top
         fig.add_trace(go.Scattermap(
             lat=satellite['latitude'], lon=satellite['longitude'],
             mode='markers',
