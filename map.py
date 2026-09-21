@@ -2,11 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
-import os
+import pandas as pd
 from fire_data import load_fires
 
 app = FastAPI()
@@ -36,31 +34,45 @@ def firewatch(request: Request):
     if not reported.empty:
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
-            mode = 'markers',
+            mode='markers',
             marker=dict(size=reported['mag'] * 7, color='rgba(255, 69, 0, 0.25)'),
             hoverinfo='skip', showlegend=False
         ))
         fig.add_trace(go.Scattermap(
             lat=reported['latitude'], lon=reported['longitude'],
             mode='markers',
-            marker=dict(size=9, color = reported['mag'], colorscale = 'reds', cmin=1, cmax=5, symbol='circle'),
+            marker=dict(size=9, color=reported['mag'], colorscale='reds', cmin=1, cmax=5, symbol='circle'),
             text=reported['place'],
             hovertemplate='Reported: %{text}<extra></extra>',
             name='Reported fires',
-            showlegend = True
+            showlegend=True
         ))
+
     satellite = data[data['source'] == 'satellite']
     if not satellite.empty:
         fig.add_trace(go.Scattermap(
             lat=satellite['latitude'], lon=satellite['longitude'],
             mode='markers',
-            marker=dict(size=10, color = '#ffd166', symbol = 'triangle'),
+            marker=dict(size=10, color='#ffd166', symbol='triangle'),
             text=satellite['place'],
             hovertemplate='Satellite detection<extra></extra>',
             name='Satellite fires',
-            showlegend = True
+            showlegend=True
+        ))
 
-
+    annotations = []
+    if satellite.empty:
+        annotations.append(dict(
+            text="No active satellite fire detections nearby right now",
+            xref="paper", yref="paper",
+            x=0.99, y=0.99,
+            xanchor="right", yanchor="top",
+            showarrow=False,
+            font=dict(color="white", size=12, family="Open Sans, sans-serif"),
+            bgcolor="rgba(0,0,0,0.6)",
+            bordercolor="rgba(255,255,255,0.2)",
+            borderwidth=1,
+            borderpad=6
         ))
 
     fig.update_layout(
@@ -80,7 +92,8 @@ def firewatch(request: Request):
             y=0.01,
             xanchor="left",
             yanchor="bottom"
-        )
+        ),
+        annotations=annotations
     )
     graph_html = pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
     return templates.TemplateResponse(request, "index.html", {"graph_html": graph_html})
