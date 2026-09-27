@@ -1,4 +1,4 @@
-# 🔥 Firewatch
+# Firewatch
 
 A web app for locating active wildfires and routing around them. It combines user-reported fire data with live satellite detections (NASA FIRMS) and calculates safe driving, biking, and walking routes that avoid fire zones — complete with turn-by-turn directions.
 
