@@ -7,3 +7,9 @@ python-multipart
 requests
 shapely
 slowapi
+adafruit-blinka
+adafruit-circuitpython-mlx90640
+adafruit-circuitpython-gps
+pyserial
+numpy
+opencv-python
