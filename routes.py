@@ -1,7 +1,7 @@
 import os
 import requests
 from fastapi import Request
-from map import app, limiter
+from app import app, limiter
 from fire_data import load_fires, get_avoid_geojson
 
 ORS_API_KEY = os.getenv("ORS_API_KEY")

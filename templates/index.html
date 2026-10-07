@@ -1,23 +1,8 @@
 <!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Firewatch</title>
-  <style>
-    html, body { margin:0; height:100%; background:#111; color:#fff; font-family:Arial,sans-serif; }
-    .header { position:absolute; z-index:10; left:16px; top:16px; background:rgba(0,0,0,.75);
-              padding:10px 14px; border-radius:8px; }
-    .header h1 { margin:0 0 4px; font-size:20px; }
-    .header p { margin:0; font-size:12px; opacity:.8; }
-    .map { width:100%; height:100%; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>🔥 Firewatch</h1>
-    <p>Camera detections: yellow = unconfirmed · red = confirmed</p>
-  </div>
-  <div class="map">{{ graph_html | safe }}</div>
-</body>
-</html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Firewatch</title>
+<style>
+html,body{margin:0;height:100%;background:#111;color:#fff;font-family:Arial,sans-serif}.map{width:100%;height:100%}.panel{position:absolute;z-index:20;left:16px;top:16px;width:300px;max-height:calc(100% - 32px);overflow:auto;background:rgba(0,0,0,.82);padding:14px;border-radius:10px;box-sizing:border-box}.panel h1{font-size:20px;margin:0 0 6px}.small{font-size:12px;opacity:.75}.row{border-top:1px solid #333;padding:8px 0}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.online{background:#35c759}.stale{background:#ff9500}.offline{background:#fff}.fire{background:#e60000}.unconfirmed{background:#ffcc00}.false{background:#777}
+</style></head><body><div class="panel"><h1>🔥 Firewatch</h1><div class="small">Camera status and fire detections</div><div id="cameras">Loading cameras…</div><div id="events"></div></div><div class="map">{{ graph_html | safe }}</div>
+<script>
+async function refresh(){try{const c=await fetch('/api/cameras/status').then(r=>r.json());document.getElementById('cameras').innerHTML='<h3>Cameras</h3>'+c.cameras.map(x=>`<div class="row"><span class="dot ${x.status}"></span><b>${x.camera_id}</b> — ${x.status}<br><span class="small">${x.name||''} ${x.seconds_since_seen?`· ${x.seconds_since_seen}s ago`:''}</span></div>`).join('');const e=await fetch('/api/device-events?limit=10').then(r=>r.json());document.getElementById('events').innerHTML='<h3>Recent events</h3>'+e.events.map(x=>`<div class="row"><span class="dot ${x.status==='confirmed'?'fire':x.status==='unconfirmed'?'unconfirmed':'false'}"></span>${x.camera_id}: ${x.status}<br><span class="small">${x.magnitude} · ${x.fire_size_percent.toFixed(1)}% hot · ${x.max_temperature_c.toFixed(1)}°C</span></div>`).join('')}catch(e){console.error(e)}}refresh();setInterval(refresh,15000);
+</script></body></html>
