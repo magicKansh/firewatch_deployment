@@ -9,9 +9,3 @@ shapely
 slowapi
 pydantic
 twilio
-
-# Raspberry Pi node dependencies
-adafruit-blinka
-adafruit-circuitpython-mlx90640
-numpy
-picamera2

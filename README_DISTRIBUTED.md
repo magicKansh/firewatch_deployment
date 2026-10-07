@@ -143,3 +143,7 @@ Use HTTPS, firewall the server, keep secrets out of Git, back up SQLite, and con
 This is a prototype detection/decision-support system, **not a certified life-safety wildfire warning system**. MLX90640 readings can be affected by distance, emissivity, sunlight, reflections, hot vehicles/equipment, and other heat sources. Confirmation and independent verification should be used before treating an event as a real wildfire.
 
 The severity index is a relative 0–100 indicator based on hot area, persistence, and maximum temperature. It is not a scientific measurement of physical fire energy or true burned area.
+
+## Render deployment
+
+See `README_RENDER.md` for the Render setup. The important distinction is that Render uses `requirements.txt` while Raspberry Pi nodes use `requirements-pi.txt`.

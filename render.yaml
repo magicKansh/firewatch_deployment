@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: firewatch
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn map:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: FIREWATCH_DB
+        value: /var/data/firewatch.db
+      - key: FIREWATCH_IMAGE_DIR
+        value: /var/data/images
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: FIREWATCH_ADMIN_TOKEN
+        sync: false
+      - key: ORS_API_KEY
+        sync: false
+      - key: FIRMS_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: MAX_IMAGE_BYTES
+        value: "10485760"
+      - key: EVENT_DEDUPE_SECONDS
+        value: "600"
+      - key: CONFIRMATION_TOKEN_TTL_HOURS
+        value: "24"
+      - key: HEARTBEAT_TIMEOUT_SECONDS
+        value: "90"
+    disk:
+      name: firewatch-data
+      mountPath: /var/data
+      sizeGB: 10

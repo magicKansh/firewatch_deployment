@@ -1,0 +1,5 @@
+adafruit-blinka
+adafruit-circuitpython-mlx90640
+numpy
+picamera2
+requests

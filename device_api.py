@@ -14,7 +14,7 @@ from fire_data import invalidate_cache
 from notifications import send_fire_confirmation
 
 router = APIRouter()
-IMAGE_DIR = Path(__file__).resolve().parent / "images"
+IMAGE_DIR = Path(os.getenv("FIREWATCH_IMAGE_DIR", Path(__file__).resolve().parent / "images"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
 EVENT_DEDUPE_SECONDS = int(os.getenv("EVENT_DEDUPE_SECONDS", "600"))
 TOKEN_TTL_HOURS = int(os.getenv("CONFIRMATION_TOKEN_TTL_HOURS", "24"))
