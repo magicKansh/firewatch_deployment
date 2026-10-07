@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firewatch</title>
+  <style>
+    html, body { margin:0; height:100%; background:#111; color:#fff; font-family:Arial,sans-serif; }
+    .header { position:absolute; z-index:10; left:16px; top:16px; background:rgba(0,0,0,.75);
+              padding:10px 14px; border-radius:8px; }
+    .header h1 { margin:0 0 4px; font-size:20px; }
+    .header p { margin:0; font-size:12px; opacity:.8; }
+    .map { width:100%; height:100%; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔥 Firewatch</h1>
+    <p>Camera detections: yellow = unconfirmed · red = confirmed</p>
+  </div>
+  <div class="map">{{ graph_html | safe }}</div>
+</body>
+</html>

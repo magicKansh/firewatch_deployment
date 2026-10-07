@@ -1,0 +1,6 @@
+{
+  "camera_id": "CAM-001",
+  "camera_key": "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET",
+  "latitude": 41.123456,
+  "longitude": -73.123456
+}

@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+pandas
+plotly
+jinja2
+python-multipart
+requests
+shapely
+slowapi
+
+# Raspberry Pi node dependencies
+adafruit-blinka
+adafruit-circuitpython-mlx90640
+numpy
+picamera2
+
+twilio
