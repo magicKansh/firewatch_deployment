@@ -1,5 +1,5 @@
+# Raspberry Pi OS packages are installed with apt (see README_DISTRIBUTED.md).
+# Keep Picamera2/Numpy/Pillow out of pip to avoid conflicts with system libcamera.
 adafruit-blinka
 adafruit-circuitpython-mlx90640
-numpy
-picamera2
 requests

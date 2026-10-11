@@ -72,6 +72,9 @@ def init_db():
                 magnitude TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'unconfirmed',
                 image TEXT NOT NULL DEFAULT '',
+                video TEXT NOT NULL DEFAULT '',
+                visual_fire_score REAL NOT NULL DEFAULT 0,
+                detection_method TEXT NOT NULL DEFAULT 'thermal',
                 place TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT 'device',
                 dedupe_key TEXT NOT NULL DEFAULT '',
@@ -138,6 +141,9 @@ def init_db():
                 "confirmed_at": "TEXT",
                 "false_alarm_at": "TEXT",
                 "dedupe_key": "TEXT NOT NULL DEFAULT ''",
+                "video": "TEXT NOT NULL DEFAULT ''",
+                "visual_fire_score": "REAL NOT NULL DEFAULT 0",
+                "detection_method": "TEXT NOT NULL DEFAULT 'thermal'",
             },
         }
         for table, columns in migrations.items():

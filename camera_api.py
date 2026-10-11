@@ -31,6 +31,14 @@ class CameraUpdate(BaseModel):
     camera_key: str | None = Field(default=None, min_length=16, max_length=256)
 
 
+class SubscriberCreate(BaseModel):
+    camera_id: str = Field(default="*", min_length=1, max_length=64)
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=32)
+    sms_enabled: bool = True
+    email_enabled: bool = True
+
+
 @router.get("/cameras")
 def list_cameras(authorization: str | None = Header(default=None)):
     _auth(authorization)
@@ -79,3 +87,36 @@ def disable_camera(camera_id: str, authorization: str | None = Header(default=No
     if not cur.rowcount:
         raise HTTPException(status_code=404, detail="Camera not found.")
     return {"ok": True, "camera_id": camera_id, "disabled": True}
+
+
+@router.get("/subscribers")
+def list_subscribers(authorization: str | None = Header(default=None)):
+    _auth(authorization)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id,camera_id,email,phone,sms_enabled,email_enabled,enabled FROM subscribers ORDER BY id"
+        ).fetchall()
+    return {"subscribers": [dict(row) for row in rows]}
+
+
+@router.post("/subscribers")
+def create_subscriber(body: SubscriberCreate, authorization: str | None = Header(default=None)):
+    _auth(authorization)
+    email = (body.email or "").strip() or None
+    phone = (body.phone or "").strip() or None
+    if not email and not phone:
+        raise HTTPException(status_code=400, detail="Provide an email address, phone number, or both.")
+    if email and "@" not in email:
+        raise HTTPException(status_code=400, detail="Email address does not look valid.")
+    if phone and not all(char.isdigit() or char in "+- ()" for char in phone):
+        raise HTTPException(status_code=400, detail="Phone number contains unsupported characters.")
+    try:
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO subscribers(camera_id,email,phone,sms_enabled,email_enabled,enabled)
+                   VALUES (?,?,?,?,?,1)""",
+                (body.camera_id.strip(), email, phone, int(body.sms_enabled), int(body.email_enabled)),
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=f"Could not add recipient: {exc}")
+    return {"ok": True, "subscriber_id": cursor.lastrowid, "camera_id": body.camera_id, "email": email, "phone": phone}

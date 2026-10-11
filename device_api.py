@@ -16,6 +16,7 @@ from notifications import send_fire_confirmation
 router = APIRouter()
 IMAGE_DIR = Path(os.getenv("FIREWATCH_IMAGE_DIR", Path(__file__).resolve().parent / "images"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+MAX_VIDEO_BYTES = int(os.getenv("MAX_VIDEO_BYTES", str(30 * 1024 * 1024)))
 EVENT_DEDUPE_SECONDS = int(os.getenv("EVENT_DEDUPE_SECONDS", "600"))
 TOKEN_TTL_HOURS = int(os.getenv("CONFIRMATION_TOKEN_TTL_HOURS", "24"))
 HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "90"))
@@ -48,7 +49,7 @@ def _authenticate(camera_id, camera_key):
 def _save_image(image, event_id):
     if not image:
         return ""
-    IMAGE_DIR.mkdir(exist_ok=True)
+    IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     suffix = Path(image.filename or ".jpg").suffix.lower()
     if suffix not in {".jpg", ".jpeg", ".png"}:
         suffix = ".jpg"
@@ -58,6 +59,22 @@ def _save_image(image, event_id):
     name = f"{event_id}{suffix}"
     (IMAGE_DIR / name).write_bytes(content)
     return f"images/{name}"
+
+
+def _save_video(video, event_id):
+    if not video:
+        return ""
+    video_dir = IMAGE_DIR / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(video.filename or ".mp4").suffix.lower()
+    if suffix not in {".mp4", ".mov", ".webm", ".mkv"}:
+        suffix = ".mp4"
+    content = video.file.read(MAX_VIDEO_BYTES + 1)
+    if len(content) > MAX_VIDEO_BYTES:
+        raise HTTPException(status_code=413, detail="Video too large.")
+    name = f"{event_id}{suffix}"
+    (video_dir / name).write_bytes(content)
+    return f"images/videos/{name}"
 
 
 def _dedupe_key(camera_id):
@@ -75,7 +92,7 @@ def _find_open_event(conn, camera_id, now):
     ).fetchone()
 
 
-def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, duration_seconds, image_path):
+def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, duration_seconds, image_path, video_path, visual_fire_score, detection_method):
     score, magnitude = _severity(fire_size_percent, duration_seconds, max_temperature_c)
     old_score = float(row["severity_index"])
     old_temp = float(row["max_temperature_c"])
@@ -86,10 +103,13 @@ def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, durat
     conn.execute(
         """UPDATE device_events SET timestamp=?,last_seen_at=?,fire_size_percent=?,
            max_temperature_c=?,duration_seconds=?,severity_index=?,magnitude=?,
-           image=CASE WHEN ? <> '' THEN ? ELSE image END,status=? WHERE event_id=?""",
+           image=CASE WHEN ? <> '' THEN ? ELSE image END,
+           video=CASE WHEN ? <> '' THEN ? ELSE video END,
+           visual_fire_score=MAX(visual_fire_score, ?), detection_method=?, status=? WHERE event_id=?""",
         (now.isoformat(), now.isoformat(), max(old_area, fire_size_percent),
          max(old_temp, max_temperature_c), max(old_duration, duration_seconds), new_score,
          magnitude if score >= old_score else row["magnitude"], image_path, image_path,
+         video_path, video_path, visual_fire_score, detection_method[:80],
          new_status, row["event_id"]),
     )
     conn.execute(
@@ -111,6 +131,9 @@ async def camera_event(
     max_temperature_c: float = Form(...),
     duration_seconds: float = Form(...),
     image: UploadFile | None = File(None),
+    video: UploadFile | None = File(None),
+    visual_fire_score: float = Form(0.0),
+    detection_method: str = Form("thermal"),
 ):
     camera = _authenticate(camera_id, camera_key)
     if not 0 <= fire_size_percent <= 100:
@@ -121,16 +144,21 @@ async def camera_event(
         raise HTTPException(status_code=400, detail="Invalid coordinates.")
     if max_temperature_c < -100 or max_temperature_c > 1000:
         raise HTTPException(status_code=400, detail="Invalid temperature.")
+    if not 0 <= visual_fire_score <= 1:
+        raise HTTPException(status_code=400, detail="Visual fire score must be between 0 and 1.")
 
     now = utc_now()
     image_path = ""
+    video_path = ""
     # Registered server coordinates are authoritative; submitted coordinates are diagnostics only.
     with get_connection() as conn:
         existing = _find_open_event(conn, camera_id, now)
         if existing:
             image_path = _save_image(image, existing["event_id"]) if image else ""
+            video_path = _save_video(video, existing["event_id"]) if video else ""
             event_id, created, score, magnitude = _update_existing(
-                conn, existing, now, fire_size_percent, max_temperature_c, duration_seconds, image_path
+                conn, existing, now, fire_size_percent, max_temperature_c, duration_seconds,
+                image_path, video_path, visual_fire_score, detection_method
             )
             conn.execute(
                 "UPDATE cameras SET last_seen_at=?,status='online' WHERE camera_id=?",
@@ -143,6 +171,7 @@ async def camera_event(
         token = secrets.token_urlsafe(32)
         score, magnitude = _severity(fire_size_percent, duration_seconds, max_temperature_c)
         image_path = _save_image(image, event_id) if image else ""
+        video_path = _save_video(video, event_id) if video else ""
         row = {
             "event_id": event_id, "camera_id": camera_id, "timestamp": now.isoformat(),
             "first_seen_at": now.isoformat(), "last_seen_at": now.isoformat(),
@@ -150,16 +179,18 @@ async def camera_event(
             "fire_size_percent": round(fire_size_percent, 2), "max_temperature_c": round(max_temperature_c, 2),
             "duration_seconds": round(duration_seconds, 1), "severity_index": score,
             "magnitude": magnitude, "status": "unconfirmed", "image": image_path,
+            "video": video_path, "visual_fire_score": round(visual_fire_score, 4),
+            "detection_method": detection_method[:80],
             "place": camera.get("name") or camera_id, "source": "device", "dedupe_key": _dedupe_key(camera_id),
         }
         conn.execute(
             """INSERT INTO device_events
             (event_id,camera_id,timestamp,first_seen_at,last_seen_at,latitude,longitude,fire_size_percent,
-             max_temperature_c,duration_seconds,severity_index,magnitude,status,image,place,source,dedupe_key)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             max_temperature_c,duration_seconds,severity_index,magnitude,status,image,video,visual_fire_score,detection_method,place,source,dedupe_key)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             tuple(row[k] for k in ["event_id","camera_id","timestamp","first_seen_at","last_seen_at","latitude","longitude",
                                    "fire_size_percent","max_temperature_c","duration_seconds","severity_index","magnitude",
-                                   "status","image","place","source","dedupe_key"]),
+                                   "status","image","video","visual_fire_score","detection_method","place","source","dedupe_key"]),
         )
         conn.execute(
             """INSERT INTO event_observations(event_id,timestamp,fire_size_percent,max_temperature_c,duration_seconds,image)

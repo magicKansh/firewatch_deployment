@@ -1,13 +1,13 @@
 # Firewatch Distributed Camera System
 
-Firewatch is a prototype distributed wildfire-detection and route-avoidance system. Each Raspberry Pi uses an MLX90640 thermal sensor to look for persistent hot regions, captures a normal camera image, and sends an event to a central FastAPI server.
+Firewatch is a prototype distributed wildfire-monitoring and route-avoidance system. Each Raspberry Pi uses an MLX90640 thermal sensor plus a Pi Camera video stream. Persistent thermal or warm/flickering video clues create an unconfirmed event; the Pi uploads a snapshot and a short MP4 clip when recording succeeds. The video rule is a lightweight heuristic, not a trained fire-classification model, so human confirmation remains important.
 
 ## Architecture
 
 ```text
 Pi #1 / Pi #2 / Pi #N
- MLX90640 + Pi Camera
-        | HTTPS
+ MLX90640 + Pi Camera video
+        | snapshot + MP4 over HTTPS
         v
  Firewatch Server
   SQLite + APIs
@@ -27,6 +27,9 @@ Pi #1 / Pi #2 / Pi #N
 - Fixed server-side latitude/longitude is authoritative; no GPS is required on the Pi.
 - Camera heartbeat and online/stale/offline status.
 - Thermal detection uses an adaptive ambient threshold plus connected-component filtering, persistence, and configurable thresholds.
+- A video-frame heuristic checks for persistent bright warm-colored regions and a short video clip is attached to an event when recording is available. It can have false positives and is not a certified classifier.
+- The browser map initializes correctly even with zero events, shows registered fixed-location cameras, and refreshes event/map data automatically every 30 seconds.
+- Event snapshots and MP4 clips are linked in the recent-events panel.
 - Event deduplication prevents repeated alerts from becoming dozens of separate events.
 - Event observations preserve repeated measurements.
 - Confirmation tokens are hashed, expire, and are single-use.
@@ -88,13 +91,27 @@ Email can be added with `--email`.
 
 ## Raspberry Pi setup
 
-On each Pi install the Raspberry Pi dependencies and copy `camera_config.json.example` to `camera_config.json`.
-
-Then run:
+On Raspberry Pi OS, install system camera/video packages first so Picamera2 uses the OS-provided libcamera stack:
 
 ```bash
-python3 sensor_monitor.py
+sudo apt update
+sudo apt install -y python3-picamera2 python3-numpy python3-pil python3-venv ffmpeg
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -r requirements-pi.txt
+cp camera_config.json.example camera_config.json
 ```
+
+Edit `camera_config.json` with the generated `camera_key` and the camera's fixed registered coordinates. The server's registered coordinates are authoritative; the Pi does not need a GPS receiver.
+
+Then run (replace the address with your deployed Render URL):
+
+```bash
+export FIREWATCH_SERVER_URL="https://your-service.onrender.com"
+python sensor_monitor.py
+```
+
+The Pi samples video frames and the thermal sensor. On a persistent candidate, it records an approximately 6-second MP4 clip and snapshot, then uploads both to `/api/camera-event`. Tune `VISUAL_FIRE_THRESHOLD`, `VISUAL_REQUIRED_FRAMES`, and `FIREWATCH_CLIP_SECONDS` for the installation. Install/configure a real trained fire-detection model and validate it on representative data before relying on video-only decisions in the field.
 
 The Pi sends a heartbeat about every 30 seconds. The thermal detector uses:
 
@@ -108,8 +125,8 @@ These values are intentionally configurable because installation, weather, dista
 
 ## Confirmation flow
 
-1. Pi detects a persistent hot region.
-2. Pi captures a normal image.
+1. Pi detects persistent thermal heat or a persistent video-frame heuristic signal.
+2. Pi captures a snapshot and attempts a short MP4 clip.
 3. Server authenticates the camera and uses its registered coordinates.
 4. Server creates an `unconfirmed` event.
 5. SMS/email is sent with confirmation links.
@@ -133,12 +150,14 @@ Endpoints:
 - `POST /api/admin/cameras`
 - `PUT /api/admin/cameras/{camera_id}`
 - `DELETE /api/admin/cameras/{camera_id}` (disables it)
+- `GET /api/admin/subscribers`
+- `POST /api/admin/subscribers`
 - `GET /api/cameras/status`
 - `GET /api/device-events`
 
 ## Important production notes
 
-Use HTTPS, firewall the server, keep secrets out of Git, back up SQLite, and consider a real background queue for notifications if this becomes a larger deployment. For stronger device authentication, a future version can move from shared camera keys to signed HMAC request bodies with timestamp/replay protection.
+Use HTTPS, firewall the server, keep secrets out of Git, back up SQLite and uploaded clips, and consider a real background queue for notifications if this becomes a larger deployment. Render stores these under the persistent disk mount configured in `render.yaml`. The route avoid-zone is a prototype buffer around reported/confirmed points, not a surveyed evacuation boundary. For stronger device authentication, a future version can move from shared camera keys to signed HMAC request bodies with timestamp/replay protection.
 
 This is a prototype detection/decision-support system, **not a certified life-safety wildfire warning system**. MLX90640 readings can be affected by distance, emissivity, sunlight, reflections, hot vehicles/equipment, and other heat sources. Confirmation and independent verification should be used before treating an event as a real wildfire.
 

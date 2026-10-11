@@ -21,14 +21,19 @@ def invalidate_cache():
 
 
 def _empty():
-    return pd.DataFrame(columns=["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","severity_index"])
+    return pd.DataFrame(columns=["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index"])
 
 
 def _load_reported_fires():
     try:
         data = pd.read_csv(os.path.join(DATA_DIR, "fires.csv"))
-        data["mag"] = pd.to_numeric(data["mag"], errors="coerce")
+        for column in ("latitude", "longitude", "mag"):
+            data[column] = pd.to_numeric(data[column].astype(str).str.replace("−", "-", regex=False), errors="coerce")
+        data = data.dropna(subset=["latitude", "longitude"])
+        data = data[data["latitude"].between(-90, 90) & data["longitude"].between(-180, 180)]
         data["source"] = "reported"
+        if "place" not in data.columns:
+            data["place"] = "Reported fire"
         return data[["latitude","longitude","mag","place","source"]]
     except Exception:
         return _empty()[["latitude","longitude","mag","place","source"]]
@@ -46,14 +51,31 @@ def _load_device_fires():
     data["mag"] = data["severity_index"].clip(lower=0.5, upper=5)
     data["place"] = data["place"].fillna("Raspberry Pi camera")
     data["source"] = "device"
-    return data[["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","severity_index"]]
+    return data[["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index"]]
 
 
 def _load_satellite_fires(reported_df):
-    if not FIRMS_API_KEY or reported_df.empty:
+    if not FIRMS_API_KEY:
         return _empty()[["latitude","longitude","mag","place","source"]]
+    if not reported_df.empty:
+        base = reported_df
+    else:
+        # With no CSV-reported fires, query around the registered camera network
+        # so NASA FIRMS remains useful to this installation.
+        try:
+            with get_connection() as conn:
+                camera_rows = conn.execute("SELECT latitude,longitude FROM cameras WHERE enabled=1").fetchall()
+            base = pd.DataFrame([dict(r) for r in camera_rows])
+        except Exception:
+            base = pd.DataFrame()
+        if base.empty:
+            return _empty()[["latitude","longitude","mag","place","source"]]
     pad = 2.0
-    area = f"{reported_df['longitude'].min()-pad},{reported_df['latitude'].min()-pad},{reported_df['longitude'].max()+pad},{reported_df['latitude'].max()+pad}"
+    min_lon = max(-180.0, float(base["longitude"].min()) - pad)
+    min_lat = max(-90.0, float(base["latitude"].min()) - pad)
+    max_lon = min(180.0, float(base["longitude"].max()) + pad)
+    max_lat = min(90.0, float(base["latitude"].max()) + pad)
+    area = f"{min_lon},{min_lat},{max_lon},{max_lat}"
     url = f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{FIRMS_API_KEY}/VIIRS_SNPP_NRT/{area}/1"
     try:
         response = requests.get(url, timeout=15)
@@ -63,7 +85,8 @@ def _load_satellite_fires(reported_df):
         return _empty()[["latitude","longitude","mag","place","source"]]
     if df.empty or "latitude" not in df.columns:
         return _empty()[["latitude","longitude","mag","place","source"]]
-    frp = pd.to_numeric(df.get("frp", 1), errors="coerce").fillna(1)
+    frp_source = df["frp"] if "frp" in df.columns else pd.Series(1.0, index=df.index)
+    frp = pd.to_numeric(frp_source, errors="coerce").fillna(1)
     scale = max(float(frp.max()), 1.0)
     df["mag"] = (frp / scale * 5).clip(lower=.5, upper=5)
     df["place"] = "Satellite detection"
@@ -78,7 +101,8 @@ def load_fires(use_cache=True):
     reported = _load_reported_fires()
     satellite = _load_satellite_fires(reported)
     device = _load_device_fires()
-    combined = pd.concat([reported, satellite, device], ignore_index=True, sort=False)
+    nonempty = [frame for frame in (reported, satellite, device) if frame is not None and not frame.empty]
+    combined = pd.concat(nonempty, ignore_index=True, sort=False) if nonempty else _empty()
     combined["mag"] = pd.to_numeric(combined["mag"], errors="coerce")
     combined = combined.dropna(subset=["latitude","longitude"])
     _cache["data"] = combined

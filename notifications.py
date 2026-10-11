@@ -26,7 +26,8 @@ def _confirmation_text(event):
     no = f"{PUBLIC_BASE_URL}/confirm/{eid}/no?token={event['confirm_token']}"
     return (f"FIREWATCH ALERT: Possible fire at {event['camera_id']}. "
             f"Hot area {event['fire_size_percent']:.1f}%, max {event['max_temperature_c']:.1f} C, "
-            f"severity {event['severity_index']:.1f} ({event['magnitude']}).\n"
+            f"severity {event['severity_index']:.1f} ({event['magnitude']}). "
+            f"Video score {float(event.get('visual_fire_score', 0) or 0):.3f} via {event.get('detection_method', 'thermal')}.\n"
             f"CONFIRM: {yes}\nFALSE ALARM: {no}"), yes, no
 
 
@@ -42,6 +43,8 @@ def send_fire_confirmation(event):
     body, _, _ = _confirmation_text(event)
     sms_sent = email_sent = 0
     errors = []
+    if not subscribers:
+        errors.append("No enabled notification recipients are configured for this camera or '*'.")
     if Client and all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER]):
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         for s in subscribers:

@@ -37,6 +37,8 @@ services:
         sync: false
       - key: MAX_IMAGE_BYTES
         value: "10485760"
+      - key: MAX_VIDEO_BYTES
+        value: "31457280"
       - key: EVENT_DEDUPE_SECONDS
         value: "600"
       - key: CONFIRMATION_TOKEN_TTL_HOURS
