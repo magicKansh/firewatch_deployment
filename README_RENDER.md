@@ -101,3 +101,8 @@ The old requirements file contained `picamera2`. That package depends on Raspber
 ## Important production limitation
 
 Firewatch is a prototype detection and decision-support system, not a certified life-safety wildfire warning system. Thermal readings can be affected by distance, emissivity, sunlight, reflections, hot vehicles/equipment, and other heat sources. Use independent verification and appropriate emergency procedures before treating an alert as a real wildfire.
+
+
+### NASA FIRMS satellite fire layer
+
+The top-right dashboard panel includes a toggle for NASA FIRMS active-fire detections. Set `FIRMS_API_KEY` in the Render environment to enable it. By default the server requests detections around registered enabled cameras (or around reported-fire coordinates when there are no registered cameras). You can optionally set `FIRMS_BBOX` to `west,south,east,north` to monitor a fixed area instead, for example `-75.0,39.0,-73.0,42.0`. The toggle controls map visibility; it does not disable confirmed/report/satellite hazard avoidance in routing.

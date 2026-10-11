@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import app
 from database import get_connection
-from fire_data import get_last_updated, load_fires
+from fire_data import get_last_updated, get_satellite_status, load_fires
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -183,6 +183,12 @@ def health_check():
 def map_figure():
     fig, _, _ = build_map_figure()
     return JSONResponse(content=json.loads(pio.to_json(fig, validate=True)))
+
+
+@app.get("/api/satellite-status")
+def satellite_status():
+    """Expose whether NASA FIRMS is configured and whether it returned detections."""
+    return JSONResponse(content=get_satellite_status())
 
 
 @app.get("/", response_class=HTMLResponse)

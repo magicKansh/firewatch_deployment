@@ -19,6 +19,8 @@ services:
         sync: false
       - key: FIRMS_API_KEY
         sync: false
+      - key: FIRMS_BBOX
+        sync: false
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN

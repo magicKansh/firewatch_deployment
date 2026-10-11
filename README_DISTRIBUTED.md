@@ -166,3 +166,8 @@ The severity index is a relative 0–100 indicator based on hot area, persistenc
 ## Render deployment
 
 See `README_RENDER.md` for the Render setup. The important distinction is that Render uses `requirements.txt` while Raspberry Pi nodes use `requirements-pi.txt`.
+
+
+## Dashboard navigation and satellite monitoring
+
+The top-right panel supports driving, biking, and walking routes with turn-by-turn instructions. Route avoidance uses available reported/satellite detections and confirmed camera fires; unconfirmed camera events stay visible for review and are not automatically treated as confirmed device hazards. The panel also exposes the NASA FIRMS active-fire layer. Set `FIRMS_API_KEY` to enable active-fire satellite detections, and optionally `FIRMS_BBOX=west,south,east,north` to monitor a fixed bounding box instead of the camera footprint.
