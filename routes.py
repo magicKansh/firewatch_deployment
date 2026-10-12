@@ -40,9 +40,18 @@ def call_ors_route(start, end, profile):
 
 
 def geocode(query):
-    _require_ors_key()
     if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
         raise ValueError("Enter a location under 200 characters.")
+    # Accept coordinates from the browser's current-location button even if reverse geocoding is down.
+    pieces = [part.strip() for part in query.split(",")]
+    if len(pieces) == 2:
+        try:
+            latitude, longitude = float(pieces[0]), float(pieces[1])
+            if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+                return [longitude, latitude]
+        except ValueError:
+            pass
+    _require_ors_key()
     response = requests.get(
         "https://api.openrouteservice.org/geocode/search",
         params={"api_key": ORS_API_KEY, "text": query.strip()}, timeout=12,
@@ -151,15 +160,22 @@ async def autocomplete(request: Request, query: str):
         return response.json()
 
     try:
-        payload = search("venue,address,street,locality,neighbourhood")
-        if not payload.get("features"):
-            payload = search()
+        # Ask for precise features first, then broaden the search only if needed.
+        payload = search("venue,address,street,neighbourhood,locality")
+        if len(payload.get("features", [])) < 3:
+            broader = search("venue,address,street,neighbourhood,locality,borough,localadmin,county,region,country")
+            seen = {feature.get("properties", {}).get("label", "").casefold() for feature in payload.get("features", [])}
+            payload["features"] = payload.get("features", []) + [
+                feature for feature in broader.get("features", [])
+                if feature.get("properties", {}).get("label", "").casefold() not in seen
+            ]
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Autocomplete service failed: {exc}")
     return {
         "suggestions": [
             {
                 "label": feature["properties"].get("label", ""),
+                "layer": feature["properties"].get("layer", "location"),
                 "lon": feature["geometry"]["coordinates"][0],
                 "lat": feature["geometry"]["coordinates"][1],
             }

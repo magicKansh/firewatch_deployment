@@ -111,3 +111,9 @@ Firewatch is a prototype detection and decision-support system, not a certified 
 ### NASA FIRMS satellite fire layer
 
 The top-right dashboard panel includes a toggle for NASA FIRMS active-fire detections. Set `FIRMS_API_KEY` in the Render environment to enable it. By default the server requests detections around registered enabled cameras (or around reported-fire coordinates when there are no registered cameras). You can optionally set `FIRMS_BBOX` to `west,south,east,north` to monitor a fixed area instead, for example `-75.0,39.0,-73.0,42.0`. The toggle controls map visibility; it does not disable confirmed/report/satellite hazard avoidance in routing.
+
+## Navigation UI updates
+
+The dashboard now uses a dark translucent map-overlay style with orange route highlighting, an interactive location autocomplete menu, and a browser geolocation button for the route start. Suggestions rank specific features (venues, addresses, streets, neighbourhoods) before broader areas. The current-location button requires the site to be served over HTTPS (Render does this automatically) and the user to grant browser location permission. If reverse geocoding is unavailable, coordinate input is still accepted by the route API.
+
+For live autocomplete and address routing, configure `ORS_API_KEY` in the Render service environment. For satellite fire detections, configure `FIRMS_API_KEY`.
