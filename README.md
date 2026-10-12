@@ -4,8 +4,6 @@ A web app for locating active wildfires and routing around them. It combines use
 
 **Live site:** https://firewatch-deployment.onrender.com
 
-![Firewatch screenshot](static/screenshot.png)
-
 ---
 
 ## How to run it
