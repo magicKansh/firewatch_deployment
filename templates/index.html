@@ -1,1302 +1,1283 @@
-<!DOCTYPE html>
+
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Firewatch | Wildfire Monitoring</title>
-
-    <style>
-        * {
-            box-sizing: border-box;
-        }
-
-        html, body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            font-family: Arial, Helvetica, sans-serif;
-            color: #202938;
-            background: #e5e7eb;
-        }
-
-        button, input, select {
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 13px;
-        }
-
-        #map-root {
-            position: fixed;
-            inset: 0;
-            z-index: 1;
-        }
-
-        #map-root .plot-container,
-        #map-root .svg-container {
-            width: 100% !important;
-            height: 100% !important;
-        }
-
-        .panel {
-            position: fixed;
-            z-index: 10;
-            background: #ffffff;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-        }
-
-        /* Left monitoring panel */
-
-        #sidebar {
-            top: 12px;
-            left: 12px;
-            bottom: 12px;
-            width: 310px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .brand {
-            padding: 16px;
-            border-bottom: 1px solid #d1d5db;
-        }
-
-        .brand h1 {
-            margin: 0;
-            font-size: 22px;
-            font-weight: 700;
-            letter-spacing: normal;
-        }
-
-        .brand p {
-            margin: 5px 0 0;
-            font-size: 12px;
-            color: #596579;
-        }
-
-        .live-status {
-            margin-top: 12px;
-            font-size: 12px;
-            color: #166534;
-        }
-
-        .status-dot {
-            display: inline-block;
-            height: 8px;
-            width: 8px;
-            margin-right: 5px;
-            border-radius: 50%;
-            vertical-align: middle;
-            background: #16a34a;
-        }
-
-        .metrics {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 6px;
-            padding: 10px;
-            border-bottom: 1px solid #d1d5db;
-        }
-
-        .metric {
-            padding: 10px 5px;
-            background: #f3f4f6;
-            border: 1px solid #e5e7eb;
-            border-radius: 4px;
-            text-align: center;
-        }
-
-        .metric strong {
-            display: block;
-            font-size: 21px;
-            font-weight: 700;
-        }
-
-        .metric span {
-            display: block;
-            margin-top: 4px;
-            color: #596579;
-            font-size: 10px;
-            text-transform: uppercase;
-        }
-
-        .sidebar-content {
-            flex: 1;
-            padding: 0 14px 14px;
-            overflow-y: auto;
-        }
-
-        .section-heading {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 16px 0 8px;
-            font-size: 13px;
-            font-weight: 700;
-        }
-
-        .count {
-            color: #596579;
-            font-size: 11px;
-            font-weight: 400;
-        }
-
-        .empty {
-            padding: 10px;
-            border: 1px solid #d1d5db;
-            background: #f9fafb;
-            border-radius: 4px;
-            color: #596579;
-            font-size: 12px;
-            line-height: 1.5;
-        }
-
-        .entry {
-            padding: 10px 0;
-            border-top: 1px solid #e5e7eb;
-            font-size: 12px;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
-        }
-
-        .entry-top {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-        }
-
-        .entry-top strong {
-            font-size: 12px;
-        }
-
-        .entry-state {
-            margin-left: auto;
-            color: #596579;
-            font-size: 10px;
-            text-transform: uppercase;
-        }
-
-        .entry-dot {
-            flex: 0 0 auto;
-            height: 8px;
-            width: 8px;
-            border-radius: 50%;
-        }
-
-        .entry-detail {
-            margin-top: 4px;
-            color: #596579;
-            font-size: 11px;
-        }
-
-        .sidebar-footer {
-            padding: 12px;
-            border-top: 1px solid #d1d5db;
-            color: #596579;
-            font-size: 10px;
-            line-height: 1.5;
-        }
-
-        /* Navigation panel in the upper-right corner */
-
-        #navigation {
-            position: fixed;
-            z-index: 20;
-            top: 12px;
-            right: 12px;
-            width: 355px;
-            max-width: calc(100vw - 24px);
-            max-height: calc(100vh - 24px);
-            overflow-y: auto;
-            padding: 15px;
-            background: #ffffff;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        }
-
-        .navigation-heading {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-
-        .navigation-heading h2 {
-            margin: 0;
-            font-size: 18px;
-            font-weight: 700;
-        }
-
-        .navigation-heading p {
-            margin: 5px 0 0;
-            color: #596579;
-            font-size: 11px;
-            line-height: 1.4;
-        }
-
-        .button {
-            padding: 9px 11px;
-            color: #202938;
-            background: #f3f4f6;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-
-        .button:hover {
-            background: #e5e7eb;
-        }
-
-        .button:disabled {
-            opacity: 0.6;
-            cursor: wait;
-        }
-
-        .button-primary {
-            color: #ffffff;
-            background: #1d4ed8;
-            border-color: #1d4ed8;
-        }
-
-        .button-primary:hover {
-            background: #1e40af;
-        }
-
-        .travel-modes {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 6px;
-            margin-bottom: 12px;
-        }
-
-        .mode-button {
-            padding: 10px 4px;
-            background: #f3f4f6;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            color: #202938;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .mode-button[aria-pressed="true"] {
-            color: #ffffff;
-            background: #1d4ed8;
-            border-color: #1d4ed8;
-        }
-
-        .route-form {
-            display: grid;
-            gap: 10px;
-        }
-
-        .route-form label {
-            display: grid;
-            gap: 5px;
-            font-size: 11px;
-            font-weight: 700;
-            color: #374151;
-        }
-
-        .route-form input {
-            width: 100%;
-            min-width: 0;
-            padding: 10px;
-            color: #202938;
-            background: #ffffff;
-            border: 1px solid #9ca3af;
-            border-radius: 4px;
-            outline-offset: 2px;
-        }
-
-        .route-form input:focus {
-            border-color: #1d4ed8;
-            outline: 1px solid #1d4ed8;
-        }
-
-        .route-actions {
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 8px;
-        }
-
-        .route-result {
-            margin-top: 10px;
-            color: #374151;
-            font-size: 11px;
-            line-height: 1.5;
-        }
-
-        .directions {
-            margin-top: 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .directions-heading {
-            padding: 10px;
-            background: #f3f4f6;
-            border-bottom: 1px solid #d1d5db;
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        #directions-summary {
-            padding: 9px 10px;
-            font-size: 11px;
-            color: #596579;
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        #directions-list {
-            margin: 0;
-            padding: 0;
-            list-style: none;
-            max-height: 180px;
-            overflow-y: auto;
-        }
-
-        .direction-step {
-            display: grid;
-            grid-template-columns: 25px minmax(0, 1fr);
-            gap: 8px;
-            padding: 10px;
-            border-bottom: 1px solid #e5e7eb;
-            font-size: 11px;
-            line-height: 1.5;
-        }
-
-        .direction-step:last-child {
-            border-bottom: 0;
-        }
-
-        .step-number {
-            display: grid;
-            width: 23px;
-            height: 23px;
-            place-items: center;
-            border: 1px solid #9ca3af;
-            border-radius: 50%;
-            font-weight: 700;
-        }
-
-        .step-detail {
-            margin-top: 3px;
-            color: #596579;
-            font-size: 10px;
-        }
-
-        .directions-empty {
-            padding: 10px;
-            color: #596579;
-            font-size: 11px;
-            line-height: 1.5;
-        }
-
-        /* Satellite monitoring control */
-
-        .satellite-section {
-            margin-top: 12px;
-            padding: 11px;
-            background: #f9fafb;
-            border: 1px solid #d1d5db;
-            border-radius: 4px;
-        }
-
-        .satellite-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            font-weight: 700;
-            cursor: pointer;
-        }
-
-        .satellite-label input {
-            width: 16px;
-            height: 16px;
-        }
-
-        #satellite-status {
-            margin: 7px 0 0 24px;
-            color: #596579;
-            font-size: 10px;
-            line-height: 1.5;
-        }
-
-        #map-status {
-            position: fixed;
-            z-index: 8;
-            left: 340px;
-            bottom: 12px;
-            padding: 8px 10px;
-            background: #ffffff;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            color: #374151;
-            font-size: 11px;
-        }
-
-        .map-legend {
-            position: fixed;
-            z-index: 8;
-            bottom: 12px;
-            right: 385px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            max-width: 45vw;
-            padding: 9px 11px;
-            background: #ffffff;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            color: #374151;
-            font-size: 10px;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .legend-dot {
-            height: 8px;
-            width: 8px;
-            border-radius: 50%;
-        }
-
-        a {
-            color: #1d4ed8;
-        }
-
-        @media (max-width: 820px) {
-            body {
-                overflow: auto;
-            }
-
-            #sidebar {
-                top: 10px;
-                left: 10px;
-                bottom: auto;
-                width: min(290px, calc(100vw - 20px));
-                max-height: 35vh;
-            }
-
-            .sidebar-footer {
-                display: none;
-            }
-
-            #navigation {
-                top: auto;
-                bottom: 10px;
-                right: 10px;
-                width: min(355px, calc(100vw - 20px));
-                max-height: 50vh;
-            }
-
-            #map-status {
-                display: none;
-            }
-
-            .map-legend {
-                display: none;
-            }
-
-            #directions-list {
-                max-height: 100px;
-            }
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#171717">
+<title>Firewatch | Wildfire Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#d8dedc;--surface:rgba(24,25,24,.88);--border:rgba(255,255,255,.15);--border-strong:rgba(255,255,255,.28);--text:#f8fafc;--secondary:#e5e7eb;--muted:#c5c8c7;--blue:#f0440a;--blue-hover:#d93a08;--green:#86efac;--green-bg:rgba(22,163,74,.16);--amber:#fbbf24;--amber-bg:rgba(217,119,6,.18);--red:#fca5a5;--red-bg:rgba(220,38,38,.18);--shadow:0 14px 40px rgba(0,0,0,.32);--shadow-small:0 5px 18px rgba(0,0,0,.2);--radius:12px;--header-height:60px}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#f8fafc;background:#d8dedc;font-size:13px;-webkit-font-smoothing:antialiased}
+button,input{font:inherit}
+button{cursor:pointer}
+button:disabled{cursor:wait;opacity:.65}
+button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offset:2px}
+#map-root{position:fixed;z-index:1;inset:0;background:#d8dedc}
+#map-root .plot-container,#map-root .svg-container,#map-root .plotly-graph-div{width:100%!important;height:100%!important}
+.topbar{position:fixed;z-index:50;top:0;left:0;right:0;height:var(--header-height);display:flex;align-items:center;gap:22px;padding:0 20px;background:rgba(22,23,22,.84);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.12);box-shadow:0 4px 18px rgba(0,0,0,.18)}
+.brand{display:flex;align-items:center;gap:10px;flex:0 0 auto;min-width:218px}
+.brand-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;color:#fff;background:#f0440a;font-size:12px;font-weight:700;letter-spacing:-.4px}
+.brand-copy{display:flex;flex-direction:column;gap:2px}
+.brand-name{font-size:16px;font-weight:700;letter-spacing:-.5px;color:#fff}
+.brand-subtitle{color:#d1d5db;font-size:10px;font-weight:500}
+.global-search{position:relative;flex:1 1 auto;max-width:460px;min-width:140px}
+.global-search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#d1d5db;pointer-events:none}
+.global-search input{width:100%;height:37px;padding:0 12px 0 37px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:8px;color:#fff;outline:none}
+.global-search input::placeholder{color:#d1d5db}
+.global-search input:focus{background:rgba(0,0,0,.25);border-color:#fb6b3b}
+.topbar-spacer{flex:1 1 auto}
+.system-status{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:7px 10px;color:#bbf7d0;background:rgba(22,163,74,.16);border:1px solid rgba(134,239,172,.28);border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.system-status.degraded{color:#fde68a;background:rgba(217,119,6,.18);border-color:rgba(253,230,138,.25)}
+.status-pulse{height:7px;width:7px;background:#22c55e;border-radius:50%}
+.system-status.degraded .status-pulse{background:#d97706}
+.header-actions{display:flex;align-items:center;gap:8px}
+.icon-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:36px;padding:0 10px;color:#f3f4f6;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.17);border-radius:8px;font-size:11px;font-weight:600;white-space:nowrap}
+.icon-button:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)}
+.icon-button svg{width:15px;height:15px}
+.avatar{display:grid;place-items:center;height:34px;width:34px;border-radius:50%;color:#fff;background:#3b3b3b;border:1px solid rgba(255,255,255,.2);font-size:10px;font-weight:700}
+.panel{position:fixed;z-index:20;background:rgba(24,25,24,.84);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.18);border-radius:var(--radius);box-shadow:var(--shadow);color:#f8fafc}
+.sidebar{top:calc(var(--header-height) + 14px);left:16px;bottom:16px;width:310px;display:flex;flex-direction:column;overflow:hidden}
+.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:16px 16px 13px;border-bottom:1px solid rgba(255,255,255,.13)}
+.panel-heading h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.2px;color:#fff}
+.panel-heading p{margin:5px 0 0;color:#d1d5db;font-size:11px;line-height:1.5}
+.refresh-time{color:#d1d5db;font-size:10px;white-space:nowrap}
+.metrics-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;padding:12px;border-bottom:1px solid rgba(255,255,255,.13)}
+.metric-card{min-width:0;padding:9px 8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:9px}
+.metric-top{display:flex;align-items:center;justify-content:space-between;color:#d1d5db}
+.metric-icon{display:grid;place-items:center;height:23px;width:23px;border-radius:6px;background:rgba(255,255,255,.1);color:#f3f4f6}
+.metric-icon svg{height:13px;width:13px}
+.metric-number{display:block;margin-top:8px;font-size:24px;line-height:1;font-weight:700;letter-spacing:-.8px;color:#fff}
+.metric-label{display:block;margin-top:6px;color:#d1d5db;font-size:10px;line-height:1.3}
+.sidebar-content{flex:1 1 auto;overflow-y:auto;padding:0 15px 12px}
+.section-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 8px}
+.section-header h3{margin:0;font-size:11px;font-weight:700;color:#fff}
+.section-count{color:#d1d5db;font-size:10px;white-space:nowrap}
+.entry{padding:10px 0;border-top:1px solid rgba(255,255,255,.1)}
+.entry-top{display:flex;align-items:center;gap:7px;min-width:0}
+.entry-top strong{min-width:0;overflow-wrap:anywhere;font-size:11px;font-weight:600;color:#fff}
+.status-dot{flex:0 0 auto;display:inline-block;width:7px;height:7px;border-radius:50%}
+.status-badge{display:inline-flex;align-items:center;flex:0 0 auto;margin-left:auto;padding:3px 6px;border-radius:999px;background:rgba(255,255,255,.12);color:#e5e7eb;font-size:9px;font-weight:600;white-space:nowrap}
+.status-badge.confirmed{color:#fecaca;background:rgba(220,38,38,.2)}
+.status-badge.unconfirmed{color:#fde68a;background:rgba(217,119,6,.2)}
+.status-badge.online{color:#bbf7d0;background:rgba(22,163,74,.18)}
+.entry-details{margin:5px 0 0 14px;color:#d1d5db;font-size:10px;line-height:1.6;overflow-wrap:anywhere}
+.evidence-link{display:inline-block;margin:6px 0 0 14px;color:#fb7045;font-size:10px;text-decoration:none;font-weight:600}
+.evidence-link:hover{text-decoration:underline}
+.empty-state{padding:12px 10px;color:#e5e7eb;background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.22);border-radius:8px;font-size:11px;line-height:1.6}
+.sidebar-footer{padding:11px 14px;border-top:1px solid rgba(255,255,255,.13);color:#d1d5db;font-size:10px;line-height:1.5}
+.navigation{top:calc(var(--header-height) + 14px);right:16px;bottom:16px;width:360px;max-height:calc(100vh - var(--header-height) - 30px);display:flex;flex-direction:column;overflow:hidden}
+.navigation .panel-heading{padding:16px 16px 13px}
+.navigation-body{flex:1 1 auto;padding:13px 15px;overflow-y:auto}
+.mode-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;background:rgba(0,0,0,.23);border:1px solid rgba(255,255,255,.14);border-radius:9px}
+.mode-tab{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;padding:9px 3px;border:1px solid transparent;border-radius:6px;background:transparent;color:#e5e7eb;font-size:10px;font-weight:600}
+.mode-tab svg{width:14px;height:14px}
+.mode-tab[aria-pressed="true"]{background:#f0440a;color:#fff;border-color:#fb6b3b;box-shadow:0 2px 8px rgba(240,68,10,.25)}
+.form-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:16px 0 9px;font-size:11px;font-weight:700;color:#f3f4f6}
+.form-heading span+span{color:#d1d5db;font-size:10px;font-weight:400}
+.route-form{display:grid;gap:9px}
+.input-group label{display:block;margin-bottom:5px;color:#f3f4f6;font-size:10px;font-weight:600}
+.input-wrap{position:relative}
+.input-wrap>svg{position:absolute;left:11px;top:50%;width:15px;height:15px;transform:translateY(-50%);color:#64748b;pointer-events:none}
+.input-wrap input{display:block;width:100%;height:40px;padding:0 11px 0 36px;border:1px solid rgba(255,255,255,.35);border-radius:8px;background:rgba(255,255,255,.96);color:#171717;outline:none}
+.input-wrap input::placeholder{color:#6b7280}
+.input-wrap input:focus{border-color:#fb6b3b;box-shadow:0 0 0 3px rgba(240,68,10,.2)}
+.input-wrap.has-location-button input{padding-right:45px}
+.route-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:3px}
+.primary-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 13px;background:#f0440a;border:1px solid #f0440a;border-radius:8px;color:#fff;font-size:11px;font-weight:600;box-shadow:0 3px 10px rgba(240,68,10,.25)}
+.primary-button:hover{background:#d93a08}
+.primary-button svg{width:15px;height:15px}
+.secondary-button{min-height:40px;padding:0 12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.24);border-radius:8px;color:#fff;font-size:11px;font-weight:600}
+.secondary-button:hover{background:rgba(255,255,255,.16)}
+.route-status{margin-top:10px;padding:10px 11px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#e5e7eb;font-size:10px;line-height:1.6}
+.route-status.error{color:#fecaca;background:rgba(220,38,38,.18);border-color:rgba(252,165,165,.3)}
+.route-status.success{color:#bbf7d0;background:rgba(22,163,74,.16);border-color:rgba(134,239,172,.28)}
+.route-summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0 10px}
+.route-summary strong{font-size:12px;font-weight:700}
+.route-summary span{color:#d1d5db;font-size:10px}
+.directions{margin-top:3px;border:1px solid rgba(255,255,255,.16);border-radius:9px;overflow:hidden}
+.directions-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px;background:rgba(255,255,255,.08);border-bottom:1px solid rgba(255,255,255,.14);font-size:11px;font-weight:700;color:#fff}
+.directions-meta{color:#d1d5db;font-size:10px;font-weight:400}
+.directions-list{padding:0;margin:0;list-style:none;max-height:210px;overflow-y:auto}
+.direction-step{display:grid;grid-template-columns:25px minmax(0,1fr);gap:9px;padding:11px;border-bottom:1px solid rgba(255,255,255,.1);font-size:10px;line-height:1.55;color:#f9fafb}
+.direction-step:last-child{border-bottom:0}
+.step-number{display:grid;place-items:center;height:23px;width:23px;border:1px solid rgba(255,255,255,.25);border-radius:50%;color:#fff;background:rgba(255,255,255,.1);font-size:10px;font-weight:700}
+.step-detail{margin-top:4px;color:#d1d5db;font-size:9px}
+.directions-empty{padding:12px;color:#d1d5db;font-size:10px;line-height:1.6}
+.satellite-card{margin-top:13px;padding:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:9px}
+.satellite-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.satellite-title{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:#fff}
+.satellite-title svg{width:16px;height:16px;color:#fb923c}
+.toggle{position:relative;display:inline-flex;align-items:center;width:34px;height:19px;flex:0 0 auto}
+.toggle input{position:absolute;opacity:0;width:1px;height:1px}
+.toggle-track{position:absolute;inset:0;cursor:pointer;background:#cbd5e1;border-radius:999px;transition:background .15s}
+.toggle-track:before{content:"";position:absolute;height:13px;width:13px;left:3px;top:3px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.16);transition:transform .15s}
+.toggle input:checked+.toggle-track{background:#f0440a}
+.toggle input:checked+.toggle-track:before{transform:translateX(15px)}
+.satellite-description{margin:8px 0 0;color:#d1d5db;font-size:10px;line-height:1.6}
+.satellite-status{margin-top:8px;color:#d1d5db;font-size:10px;line-height:1.5}
+.map-status{position:fixed;z-index:10;left:342px;bottom:15px;padding:8px 10px;background:rgba(24,25,24,.82);border:1px solid rgba(255,255,255,.15);border-radius:7px;color:#fff;box-shadow:var(--shadow-small);font-size:10px;backdrop-filter:blur(8px)}
+.map-legend{position:fixed;z-index:10;bottom:15px;right:394px;display:flex;flex-wrap:wrap;gap:10px;max-width:42vw;padding:9px 11px;background:rgba(24,25,24,.82);border:1px solid rgba(255,255,255,.15);border-radius:7px;color:#f3f4f6;box-shadow:var(--shadow-small);font-size:9px;backdrop-filter:blur(8px)}
+.legend-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend-dot{height:7px;width:7px;border-radius:50%}
+.autocomplete-menu{position:absolute;z-index:80;top:calc(100% + 5px);left:0;right:0;display:none;max-height:260px;overflow:auto;background:rgba(25,26,25,.98);border:1px solid rgba(255,255,255,.2);border-radius:9px;box-shadow:0 12px 28px rgba(0,0,0,.35);padding:5px}
+.autocomplete-menu.open{display:block}
+.autocomplete-option{display:flex;align-items:flex-start;gap:9px;width:100%;padding:9px;border:0;border-radius:6px;background:transparent;text-align:left;color:#f9fafb}
+.autocomplete-option:hover,.autocomplete-option:focus{background:rgba(240,68,10,.2);outline:none}
+.autocomplete-pin{color:#fb7045;font-size:15px;line-height:1.2}
+.autocomplete-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.autocomplete-label{font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.autocomplete-kind{font-size:9px;color:#c4c4c4;text-transform:capitalize}
+.input-wrap.has-location-button input{padding-right:45px}
+.location-button{position:absolute;right:5px;top:5px;height:30px;width:32px;display:grid;place-items:center;border:0;border-radius:6px;background:#f0440a;color:#fff}
+.location-button:hover{background:#d93a08}
+.location-button:disabled{opacity:.6}
+.location-button svg{width:16px;height:16px}
+.autocomplete-note{padding:8px 9px;color:#d1d5db;font-size:10px}
+@media(max-width:1050px){.brand{min-width:175px}.navigation{width:330px}.sidebar{width:285px}.map-legend{display:none}}
+@media(max-width:760px){
+ html,body{overflow:auto;min-height:100%}
+ .topbar{position:relative;background:rgba(22,23,22,.94);height:58px;gap:9px;padding:0 10px}
+ .brand{min-width:0;gap:7px}
+ .brand-subtitle,.global-search{display:none}
+ .brand-name{font-size:14px}
+ .system-status{font-size:0;padding:9px}
+ .system-status .status-pulse{margin:0}
+ .header-actions{margin-left:auto}
+ .header-action-label{display:none}
+ #map-root{top:0;height:42vh;bottom:auto}
+ .sidebar,.navigation{position:relative;inset:auto;width:auto;max-height:none;margin:10px;box-shadow:var(--shadow-small)}
+ .sidebar{margin-top:calc(42vh + 8px);margin-bottom:12px;height:420px}
+ .navigation{margin-top:0;margin-bottom:20px;height:auto;overflow:visible}
+ .navigation-body{overflow:visible}
+ .directions-list{max-height:180px}
+ .map-status{top:calc(42vh - 38px);bottom:auto;left:12px}
+ .map-legend{display:none}
+}
+</style>
 </head>
 
 <body>
-    <div id="map-root">{{ graph_html | safe }}</div>
+<header class="topbar">
+ <div class="brand">
+  <div class="brand-mark">FW</div>
+  <div class="brand-copy">
+   <div class="brand-name">Firewatch</div>
+   <div class="brand-subtitle">Wildfire intelligence platform</div>
+  </div>
+ </div>
 
-    <aside id="sidebar" class="panel">
-        <header class="brand">
-            <h1>Firewatch</h1>
-            <p>Wildfire monitoring and route planning</p>
-            <div class="live-status">
-                <span class="status-dot"></span>
-                Monitoring service
-            </div>
-        </header>
+ <div class="global-search">
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 4.3 4.3"></path></svg>
+  <input id="global-search" type="search" placeholder="Search cameras, events, or statuses..." autocomplete="off" aria-label="Search Firewatch">
+ </div>
 
-        <div class="metrics">
-            <div class="metric">
-                <strong id="metric-cameras">{{ stats.cameras | default(0) }}</strong>
-                <span>Cameras</span>
-            </div>
-            <div class="metric">
-                <strong id="metric-unconfirmed">{{ stats.unconfirmed | default(0) }}</strong>
-                <span>Needs review</span>
-            </div>
-            <div class="metric">
-                <strong id="metric-confirmed">{{ stats.confirmed | default(0) }}</strong>
-                <span>Confirmed</span>
-            </div>
-        </div>
+ <div class="topbar-spacer"></div>
 
-        <div class="sidebar-content">
-            <div class="section-heading">
-                Camera network
-                <span class="count" id="camera-count">
-                    {{ stats.online | default(0) }} online
-                </span>
-            </div>
+ <div id="system-status" class="system-status">
+  <span class="status-pulse"></span>
+  <span id="system-status-text">System Operational</span>
+ </div>
 
-            <div id="cameras-list">
-                {% if cameras | default([]) %}
-                    {% for camera in cameras %}
-                        <div class="entry">
-                            <div class="entry-top">
-                                <span class="entry-dot"
-                                    style="background:
-                                    {% if camera.display_status == 'online' %}#16a34a
-                                    {% elif camera.display_status == 'stale' %}#d97706
-                                    {% else %}#6b7280{% endif %}">
-                                </span>
-                                <strong>{{ camera.name or camera.camera_id }}</strong>
-                                <span class="entry-state">
-                                    {{ camera.display_status }}
-                                </span>
-                            </div>
-                            <div class="entry-detail">
-                                {{ camera.camera_id }}<br>
-                                {{ '%.5f' | format(camera.latitude) }},
-                                {{ '%.5f' | format(camera.longitude) }}
-                            </div>
-                        </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="empty">
-                        No cameras registered yet. Register a camera through
-                        the server API and save its fixed coordinates in the
-                        Raspberry Pi configuration.
-                    </div>
-                {% endif %}
-            </div>
+ <div class="header-actions">
+  <button class="icon-button" id="refresh" type="button" title="Refresh dashboard">
+   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5"></path><path d="M4.5 16.5a8 8 0 0 0 13.7 1.1L20 12"></path><path d="M4 17v-5h5"></path><path d="M19.5 7.5A8 8 0 0 0 5.8 6.4L4 12"></path></svg>
+   <span class="header-action-label">Refresh</span>
+  </button>
 
-            <div class="section-heading">
-                Recent detections
-                <span class="count" id="event-count">Latest 10</span>
-            </div>
+  <button class="icon-button" id="fit-map" type="button" title="Return to the fire overview">
+   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 9V4h5"></path><path d="M15 4h5v5"></path><path d="M20 15v5h-5"></path><path d="M9 20H4v-5"></path></svg>
+   <span class="header-action-label">Fit map</span>
+  </button>
 
-            <div id="events-list">
-                <div class="empty">Loading event history...</div>
-            </div>
-        </div>
+  <div class="avatar" aria-label="Firewatch operator">FW</div>
+ </div>
+</header>
 
-        <footer class="sidebar-footer">
-            Camera detections require review. Confirmed fires and available
-            public fire detections can be used as route-avoidance zones.
-            Always verify a hazard before acting.
-        </footer>
-    </aside>
+<div id="map-root">{{ graph_html | safe }}</div>
 
-    <section id="navigation" aria-label="Navigation and satellite monitoring">
-        <div class="navigation-heading">
-            <div>
-                <h2>Navigation</h2>
-                <p>
-                    Choose a travel mode and enter your start and destination.
-                </p>
-            </div>
-            <button type="button" class="button" id="refresh-button">
-                Refresh
-            </button>
-        </div>
+<aside class="panel sidebar">
+ <div class="panel-heading">
+  <div>
+   <h2>Monitoring overview</h2>
+   <p>Camera network and wildfire activity</p>
+  </div>
+  <span class="refresh-time" id="last-update">Loading</span>
+ </div>
 
-        <div class="travel-modes" role="group" aria-label="Travel mode">
-            <button type="button" class="mode-button"
-                    data-profile="driving-car" aria-pressed="true">
-                Driving
-            </button>
-            <button type="button" class="mode-button"
-                    data-profile="cycling-regular" aria-pressed="false">
-                Biking
-            </button>
-            <button type="button" class="mode-button"
-                    data-profile="foot-walking" aria-pressed="false">
-                Walking
-            </button>
-        </div>
+ <div class="metrics-grid">
+  <div class="metric-card">
+   <div class="metric-top">
+    <span class="metric-icon">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"></rect><circle cx="12" cy="13.5" r="3.2"></circle><path d="M8 7 9.5 4h5L16 7"></path></svg>
+    </span>
+   </div>
+   <strong class="metric-number" id="metric-cameras">{{ stats.cameras | default(0) }}</strong>
+   <span class="metric-label">Active cameras</span>
+  </div>
 
-        <form class="route-form" id="route-form">
-            <label for="route-start">
-                Starting location
-                <input
-                    id="route-start"
-                    name="start"
-                    type="text"
-                    maxlength="200"
-                    placeholder="Street address or place"
-                    autocomplete="street-address"
-                    list="start-suggestions"
-                    required>
-                <datalist id="start-suggestions"></datalist>
-            </label>
+  <div class="metric-card">
+   <div class="metric-top">
+    <span class="metric-icon">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+    </span>
+   </div>
+   <strong class="metric-number" id="metric-unconfirmed">{{ stats.unconfirmed | default(0) }}</strong>
+   <span class="metric-label">Needs review</span>
+  </div>
 
-            <label for="route-end">
-                Destination
-                <input
-                    id="route-end"
-                    name="end"
-                    type="text"
-                    maxlength="200"
-                    placeholder="Destination address or place"
-                    autocomplete="street-address"
-                    list="end-suggestions"
-                    required>
-                <datalist id="end-suggestions"></datalist>
-            </label>
+  <div class="metric-card">
+   <div class="metric-top">
+    <span class="metric-icon">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m8.5 12 2.3 2.3 4.8-5"></path></svg>
+    </span>
+   </div>
+   <strong class="metric-number" id="metric-confirmed">{{ stats.confirmed | default(0) }}</strong>
+   <span class="metric-label">Confirmed fires</span>
+  </div>
+ </div>
 
-            <div class="route-actions">
-                <button type="submit" class="button button-primary"
-                        id="route-submit">
-                    Plan route
-                </button>
-                <button type="button" class="button" id="clear-route">
-                    Clear
-                </button>
-            </div>
-        </form>
+ <div class="sidebar-content">
+  <div class="section-header">
+   <h3>Camera network</h3>
+   <span class="section-count" id="camera-count">{{ stats.online | default(0) }} online</span>
+  </div>
 
-        <div id="route-result" class="route-result" role="status">
-            Enter a starting location and destination to plan a route.
-        </div>
-
-        <div class="directions">
-            <div class="directions-heading">Turn-by-turn directions</div>
-            <div id="directions-summary">No route selected</div>
-            <ol id="directions-list">
-                <li class="directions-empty">
-                    Route instructions will appear here after you plan a route.
-                </li>
-            </ol>
-        </div>
-
-        <div class="satellite-section">
-            <label class="satellite-label" for="satellite-toggle">
-                <input type="checkbox" id="satellite-toggle" checked>
-                NASA FIRMS satellite detections
-            </label>
-            <p id="satellite-status">
-                Checking NASA FIRMS configuration...
-            </p>
-        </div>
-    </section>
-
-    <div id="map-status">Loading map...</div>
-
-    <div class="map-legend">
-        <span class="legend-item">
-            <span class="legend-dot" style="background:#16a34a"></span>
-            Camera online
-        </span>
-        <span class="legend-item">
-            <span class="legend-dot" style="background:#d97706"></span>
-            Camera stale
-        </span>
-        <span class="legend-item">
-            <span class="legend-dot" style="background:#facc15"></span>
-            Unconfirmed
-        </span>
-        <span class="legend-item">
-            <span class="legend-dot" style="background:#dc2626"></span>
-            Confirmed fire
-        </span>
-        <span class="legend-item">
-            <span class="legend-dot" style="background:#6b7280"></span>
-            False alarm
-        </span>
+  <div id="cameras-list">
+  {% if cameras %}
+   {% for camera in cameras %}
+   <div class="entry">
+    <div class="entry-top">
+     <span class="status-dot" style="background:{% if camera.display_status == 'online' %}#16a34a{% elif camera.display_status == 'stale' %}#d97706{% else %}#64748b{% endif %}"></span>
+     <strong>{{ camera.name or camera.camera_id }}</strong>
+     <span class="status-badge">{{ camera.display_status }}</span>
     </div>
+    <div class="entry-details">
+     {{ camera.camera_id }}<br>
+     {{ '%.5f' | format(camera.latitude) }}, {{ '%.5f' | format(camera.longitude) }}
+    </div>
+   </div>
+   {% endfor %}
+  {% else %}
+   <div class="empty-state">No cameras have been registered yet. Register a fixed-location camera through the camera administration API to show it here.</div>
+  {% endif %}
+  </div>
 
-    <script>
-        const byId = id => document.getElementById(id);
+  <div class="section-header">
+   <h3>Recent detections</h3>
+   <span class="section-count" id="event-count">Loading</span>
+  </div>
 
-        const escapeHtml = value =>
-            String(value ?? "").replace(/[&<>"']/g, character => ({
-                "&": "&amp;",
-                "<": "&lt;",
-                ">": "&gt;",
-                '"': "&quot;",
-                "'": "&#39;"
-            })[character]);
+  <div id="events-list">
+   <div class="empty-state">Loading recent events...</div>
+  </div>
+ </div>
 
-        const statusColor = status => {
-            if (status === "online") return "#16a34a";
-            if (status === "stale") return "#d97706";
-            if (status === "unconfirmed") return "#facc15";
-            if (status === "confirmed") return "#dc2626";
-            return "#6b7280";
-        };
+ <div class="sidebar-footer">
+  Camera detections begin as unconfirmed events. Confirmed camera fires and
+  available public fire detections may affect route planning. Always verify
+  a hazard before making safety-critical decisions.
+ </div>
+</aside>
 
-        let selectedProfile = "driving-car";
-        let routeOptions = null;
-        let activeRoute = null;
-        let satelliteLayerVisible = true;
+<section class="panel navigation" aria-label="Route planning">
+ <div class="panel-heading">
+  <div>
+   <h2>Navigation</h2>
+   <p>Plan a route around known hotspot zones</p>
+  </div>
+  <span class="section-count">OpenRouteService</span>
+ </div>
 
-        function formatDistance(meters) {
-            const value = Number(meters || 0);
-            return value >= 1000
-                ? (value / 1000).toFixed(1) + " km"
-                : Math.round(value) + " m";
+ <div class="navigation-body">
+  <div class="mode-tabs" role="group" aria-label="Travel mode">
+   <button class="mode-tab" type="button" data-profile="driving-car" aria-pressed="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 11 7 5h10l2 6"></path><path d="M3 11h18v7H3z"></path><circle cx="7" cy="18" r="1.7"></circle><circle cx="17" cy="18" r="1.7"></circle></svg>
+    Driving
+   </button>
+   <button class="mode-tab" type="button" data-profile="cycling-regular" aria-pressed="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="6" cy="16.5" r="4"></circle><circle cx="18" cy="16.5" r="4"></circle><path d="m6 16.5 4-7 4 7H6l3-5h6"></path><path d="M12 6h3"></path></svg>
+    Biking
+   </button>
+   <button class="mode-tab" type="button" data-profile="foot-walking" aria-pressed="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="14" cy="5" r="2"></circle><path d="m12 9-3 5 4 2 2 5"></path><path d="m12 10 4 3 3 1"></path><path d="m9 14-3 5"></path></svg>
+    Walking
+   </button>
+  </div>
+
+  <div class="form-heading">
+   <span>Trip details</span>
+   <span>Required fields</span>
+  </div>
+
+  <form class="route-form" id="route-form">
+   <div class="input-group">
+    <label for="route-start">Starting location</label>
+    <div class="input-wrap has-location-button">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="2.5"></circle></svg>
+     <input id="route-start" name="start" type="text" maxlength="200" placeholder="Search street, place, or address" autocomplete="off" aria-autocomplete="list" aria-expanded="false" aria-controls="start-suggestions" required>
+     <button class="location-button" id="use-current-location" type="button" title="Use my current location" aria-label="Use my current location">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="2.5"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path></svg>
+     </button>
+     <div class="autocomplete-menu" id="start-suggestions" role="listbox" aria-label="Starting location suggestions"></div>
+    </div>
+   </div>
+
+   <div class="input-group">
+    <label for="route-end">Destination</label>
+    <div class="input-wrap">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+     <input id="route-end" name="end" type="text" maxlength="200" placeholder="Search street, place, or address" autocomplete="off" aria-autocomplete="list" aria-expanded="false" aria-controls="end-suggestions" required>
+     <div class="autocomplete-menu" id="end-suggestions" role="listbox" aria-label="Destination suggestions"></div>
+    </div>
+   </div>
+
+   <div class="route-actions">
+    <button class="primary-button" type="submit" id="route-submit">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h6v6H4z"></path><path d="M14 13h6v6h-6z"></path><path d="M10 8h3a3 3 0 0 1 3 3v2"></path></svg>
+     Find safest route
+    </button>
+    <button class="secondary-button" type="button" id="clear-route">Clear</button>
+   </div>
+  </form>
+
+  <div class="route-status" id="route-result" role="status">
+   Enter your starting point and destination to calculate routes.
+  </div>
+
+  <div class="route-summary">
+   <strong>Turn-by-turn directions</strong>
+   <span id="directions-meta">No route selected</span>
+  </div>
+
+  <div class="directions">
+   <div class="directions-header">
+    <span id="directions-title">Route instructions</span>
+    <span id="directions-count" class="directions-meta">0 steps</span>
+   </div>
+   <ol class="directions-list" id="directions-list">
+    <li class="directions-empty">Directions will appear here after a successful route calculation.</li>
+   </ol>
+  </div>
+
+  <div class="satellite-card">
+   <div class="satellite-heading">
+    <div class="satellite-title">
+     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m12 3 3 3-3 3-3-3 3-3Z"></path><path d="m5 10 3 3-3 3-3-3 3-3Z"></path><path d="m19 10 3 3-3 3-3-3 3-3Z"></path><path d="m12 15 3 3-3 3-3-3 3-3Z"></path><path d="m8 13 4-4 4 4-4 4-4-4Z"></path></svg>
+     NASA FIRMS fire monitoring
+    </div>
+    <label class="toggle" for="satellite-toggle" title="Show or hide satellite detections">
+     <input type="checkbox" id="satellite-toggle" checked>
+     <span class="toggle-track"></span>
+    </label>
+   </div>
+   <p class="satellite-description">
+    Display satellite fire detections from NASA FIRMS on the map.
+    Available detections are also considered by route avoidance.
+   </p>
+   <div class="satellite-status" id="satellite-status">
+    Checking satellite monitoring configuration...
+   </div>
+  </div>
+ </div>
+</section>
+
+<div class="map-status" id="map-status">Loading map...</div>
+
+<div class="map-legend">
+ <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>Camera online</span>
+ <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>Camera stale</span>
+ <span class="legend-item"><span class="legend-dot" style="background:#ca8a04"></span>Needs review</span>
+ <span class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>Confirmed fire</span>
+ <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>Satellite detection</span>
+</div>
+
+<script>
+"use strict";
+
+const byId = id => document.getElementById(id);
+
+const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+})[char]);
+
+const STATUS_COLORS = {
+    online: "#16a34a",
+    stale: "#d97706",
+    offline: "#64748b",
+    disabled: "#64748b",
+    unknown: "#64748b",
+    unconfirmed: "#ca8a04",
+    confirmed: "#dc2626",
+    false_alarm: "#64748b",
+    active: "#ea580c",
+    resolved: "#2563eb"
+};
+
+let selectedProfile = "driving-car";
+let routeResults = null;
+let activeRoute = null;
+let satelliteVisible = true;
+
+function formatDistance(meters) {
+    const value = Number(meters || 0);
+    return value >= 1000
+        ? (value / 1000).toFixed(1) + " km"
+        : Math.round(value) + " m";
+}
+
+function formatDuration(seconds) {
+    const minutes = Math.round(Number(seconds || 0) / 60);
+
+    return minutes < 60
+        ? minutes + " min"
+        : Math.floor(minutes / 60) + " hr " + (minutes % 60) + " min";
+}
+
+function modeLabel(profile) {
+    return {
+        "driving-car": "Driving",
+        "cycling-regular": "Biking",
+        "foot-walking": "Walking"
+    }[profile] || "Route";
+}
+
+function setRouteMessage(message, state = "") {
+    const element = byId("route-result");
+    element.textContent = message;
+    element.classList.remove("error", "success");
+
+    if (state) {
+        element.classList.add(state);
+    }
+}
+
+function setMode(profile) {
+    selectedProfile = profile;
+
+    document.querySelectorAll(".mode-tab").forEach(button => {
+        button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.profile === profile)
+        );
+    });
+
+    if (routeResults) {
+        showSelectedRoute();
+    }
+}
+
+document.querySelectorAll(".mode-tab").forEach(button => {
+    button.addEventListener("click", () => setMode(button.dataset.profile));
+});
+
+function showDirections(route) {
+    const list = byId("directions-list");
+
+    if (!route) {
+        byId("directions-meta").textContent = "No route selected";
+        byId("directions-count").textContent = "0 steps";
+        list.innerHTML =
+            '<li class="directions-empty">Directions will appear here after a successful route calculation.</li>';
+        return;
+    }
+
+    const steps = Array.isArray(route.steps) ? route.steps : [];
+
+    byId("directions-meta").textContent =
+        formatDistance(route.distance) + " · " +
+        formatDuration(route.duration);
+
+    byId("directions-count").textContent =
+        steps.length + (steps.length === 1 ? " step" : " steps");
+
+    list.innerHTML = steps.length
+        ? steps.map((step, index) => `
+            <li class="direction-step">
+                <span class="step-number">${index + 1}</span>
+                <div>
+                    <div>${escapeHtml(
+                        step.instruction || "Continue along the route"
+                    )}</div>
+                    <div class="step-detail">
+                        ${formatDistance(step.distance)} ·
+                        ${formatDuration(step.duration)}
+                    </div>
+                </div>
+            </li>
+        `).join("")
+        : '<li class="directions-empty">The routing service did not return step-by-step instructions for this route.</li>';
+}
+
+async function removeRouteTraces(plot) {
+    if (!plot || !window.Plotly) return;
+
+    const indexes = [];
+
+    (plot.data || []).forEach((trace, index) => {
+        const name = String(trace.name || "");
+
+        if (
+            name.startsWith("Planned route") ||
+            name.startsWith("Route endpoints")
+        ) {
+            indexes.push(index);
         }
+    });
 
-        function formatDuration(seconds) {
-            const minutes = Math.round(Number(seconds || 0) / 60);
-            if (minutes < 60) return minutes + " min";
-            return Math.floor(minutes / 60) + " hr " +
-                (minutes % 60) + " min";
-        }
+    if (indexes.length) {
+        await Plotly.deleteTraces(plot, indexes);
+    }
+}
 
-        function setSelectedProfile(profile) {
-            selectedProfile = profile;
+async function renderActiveRoute() {
+    const plot = document.querySelector("#map-root .js-plotly-plot");
 
-            document.querySelectorAll(".mode-button").forEach(button => {
-                button.setAttribute(
-                    "aria-pressed",
-                    String(button.dataset.profile === profile)
-                );
-            });
+    if (!plot || !window.Plotly || !activeRoute) return;
 
-            if (routeOptions) {
-                selectReturnedRoute();
-            }
-        }
+    await removeRouteTraces(plot);
 
-        document.querySelectorAll(".mode-button").forEach(button => {
-            button.addEventListener("click", () => {
-                setSelectedProfile(button.dataset.profile);
-            });
+    const traces = [{
+        type: "scattermap",
+        lat: activeRoute.lat,
+        lon: activeRoute.lon,
+        mode: "lines",
+        line: {color: "#f0440a", width: 5},
+        name: "Planned route",
+        hovertemplate: "Planned route<extra></extra>"
+    }];
+
+    if (activeRoute.start && activeRoute.end) {
+        traces.push({
+            type: "scattermap",
+            lat: [activeRoute.start.lat, activeRoute.end.lat],
+            lon: [activeRoute.start.lon, activeRoute.end.lon],
+            mode: "markers+text",
+            text: ["Start", "Destination"],
+            textposition: "top right",
+            marker: {size: 13, color: ["#16a34a", "#dc2626"]},
+            name: "Route endpoints",
+            hovertemplate: "%{text}<extra></extra>"
         });
+    }
 
-        function renderDirections(route) {
-            const list = byId("directions-list");
-            const summary = byId("directions-summary");
+    await Plotly.addTraces(plot, traces);
 
-            if (!route) {
-                summary.textContent = "No route selected";
-                list.innerHTML =
-                    '<li class="directions-empty">' +
-                    "Plan a route to see its directions." +
-                    "</li>";
-                return;
-            }
+    if (activeRoute.lat.length) {
+        const middle = Math.floor(activeRoute.lat.length / 2);
 
-            const steps = Array.isArray(route.steps) ? route.steps : [];
+        await Plotly.relayout(plot, {
+            "map.center": {
+                lat: activeRoute.lat[middle],
+                lon: activeRoute.lon[middle]
+            },
+            "map.zoom": 9
+        });
+    }
+}
 
-            summary.textContent =
-                formatDistance(route.distance) + " | " +
-                formatDuration(route.duration) + " | " +
-                steps.length + " instructions";
+function applySatelliteVisibility(plot) {
+    if (!plot || !window.Plotly) return;
 
-            if (!steps.length) {
-                list.innerHTML =
-                    '<li class="directions-empty">' +
-                    "The routing service did not return step-by-step " +
-                    "instructions for this route." +
-                    "</li>";
-                return;
-            }
+    const indexes = (plot.data || [])
+        .map((trace, index) =>
+            trace.name === "Satellite fires" ? index : -1
+        )
+        .filter(index => index >= 0);
 
-            list.innerHTML = steps.map((step, index) => `
-                <li class="direction-step">
-                    <span class="step-number">${index + 1}</span>
-                    <div>
-                        <div>${escapeHtml(
-                            step.instruction || "Continue along the route"
-                        )}</div>
-                        <div class="step-detail">
-                            ${formatDistance(step.distance)} |
-                            ${formatDuration(step.duration)}
+    if (indexes.length) {
+        Plotly.restyle(plot, {visible: satelliteVisible}, indexes);
+    }
+}
+
+function badgeClass(status) {
+    return ["online", "confirmed", "unconfirmed"].includes(status)
+        ? status
+        : "";
+}
+
+async function refreshHealth() {
+    try {
+        const response = await fetch("/health", {cache: "no-store"});
+        if (!response.ok) throw new Error("Health check failed");
+
+        byId("system-status").classList.remove("degraded");
+        byId("system-status-text").textContent = "System Operational";
+    } catch (error) {
+        byId("system-status").classList.add("degraded");
+        byId("system-status-text").textContent = "Service Degraded";
+    }
+}
+
+async function refreshPanels() {
+    try {
+        const [cameraResponse, eventResponse] = await Promise.all([
+            fetch("/api/cameras/status", {cache: "no-store"}),
+            fetch("/api/device-events?limit=10", {cache: "no-store"})
+        ]);
+
+        if (!cameraResponse.ok || !eventResponse.ok) {
+            throw new Error("Camera or event API unavailable");
+        }
+
+        const cameraPayload = await cameraResponse.json();
+        const eventPayload = await eventResponse.json();
+
+        const cameras = cameraPayload.cameras || [];
+        const events = eventPayload.events || [];
+
+        byId("metric-cameras").textContent = cameras.filter(
+            camera =>
+                camera.enabled !== 0 &&
+                camera.enabled !== false &&
+                camera.status !== "disabled"
+        ).length;
+
+        byId("camera-count").textContent =
+            cameras.filter(camera => camera.status === "online").length +
+            " online";
+
+        byId("metric-unconfirmed").textContent = events.filter(
+            event => event.status === "unconfirmed"
+        ).length;
+
+        byId("metric-confirmed").textContent = events.filter(
+            event => event.status === "confirmed"
+        ).length;
+
+        byId("cameras-list").innerHTML = cameras.length
+            ? cameras.map(camera => {
+                const state = camera.status || "unknown";
+                const color = STATUS_COLORS[state] || STATUS_COLORS.unknown;
+                const lat = Number(camera.latitude);
+                const lon = Number(camera.longitude);
+
+                const coordinates =
+                    Number.isFinite(lat) && Number.isFinite(lon)
+                        ? lat.toFixed(5) + ", " + lon.toFixed(5)
+                        : "Coordinates unavailable";
+
+                const seen = Number.isFinite(
+                    Number(camera.seconds_since_seen)
+                )
+                    ? "<br>Last contact " +
+                      Math.round(Number(camera.seconds_since_seen)) +
+                      " seconds ago"
+                    : "";
+
+                return `
+                    <div class="entry">
+                        <div class="entry-top">
+                            <span class="status-dot" style="background:${color}"></span>
+                            <strong>${escapeHtml(
+                                camera.name || camera.camera_id
+                            )}</strong>
+                            <span class="status-badge ${
+                                state === "online" ? "online" : ""
+                            }">${escapeHtml(state)}</span>
+                        </div>
+                        <div class="entry-details">
+                            ${escapeHtml(camera.camera_id)}<br>
+                            ${escapeHtml(coordinates)}${seen}
                         </div>
                     </div>
-                </li>
-            `).join("");
-        }
+                `;
+            }).join("")
+            : '<div class="empty-state">No cameras registered yet. Register one using the protected camera administration API.</div>';
 
-        function applySatelliteVisibility(plot) {
-            if (!plot || !window.Plotly) return;
+        byId("events-list").innerHTML = events.length
+            ? events.map(event => {
+                const state = event.status || "unconfirmed";
+                const color = STATUS_COLORS[state] || STATUS_COLORS.unknown;
 
-            const indexes = (plot.data || [])
-                .map((trace, index) =>
-                    trace.name === "Satellite fires" ? index : -1
-                )
-                .filter(index => index >= 0);
+                const imageLink = event.image
+                    ? `<a class="evidence-link" href="/${escapeHtml(event.image)}" target="_blank" rel="noopener">View snapshot</a>`
+                    : "";
 
-            if (indexes.length) {
-                Plotly.restyle(
-                    plot,
-                    { visible: satelliteLayerVisible },
-                    indexes
-                );
-            }
-        }
+                const videoLink = event.video
+                    ? `<a class="evidence-link" href="/${escapeHtml(event.video)}" target="_blank" rel="noopener">Open event video</a>`
+                    : "";
 
-        async function drawActiveRoute() {
-            const plot = document.querySelector(
-                "#map-root .js-plotly-plot"
-            );
-
-            if (!plot || !window.Plotly || !activeRoute) return;
-
-            const removeIndexes = [];
-
-            (plot.data || []).forEach((trace, index) => {
-                const name = String(trace.name || "");
-
-                if (
-                    name.startsWith("Planned route") ||
-                    name.startsWith("Route endpoints")
-                ) {
-                    removeIndexes.push(index);
-                }
-            });
-
-            if (removeIndexes.length) {
-                await Plotly.deleteTraces(plot, removeIndexes);
-            }
-
-            const traces = [{
-                type: "scattermap",
-                lat: activeRoute.lat,
-                lon: activeRoute.lon,
-                mode: "lines",
-                line: {
-                    color: "#1d4ed8",
-                    width: 5
-                },
-                name: "Planned route",
-                hovertemplate: "Planned route<extra></extra>"
-            }];
-
-            if (activeRoute.start && activeRoute.end) {
-                traces.push({
-                    type: "scattermap",
-                    lat: [
-                        activeRoute.start.lat,
-                        activeRoute.end.lat
-                    ],
-                    lon: [
-                        activeRoute.start.lon,
-                        activeRoute.end.lon
-                    ],
-                    mode: "markers+text",
-                    text: ["Start", "Destination"],
-                    textposition: "top right",
-                    marker: {
-                        size: 13,
-                        color: ["#16a34a", "#dc2626"]
-                    },
-                    name: "Route endpoints",
-                    hovertemplate: "%{text}<extra></extra>"
-                });
-            }
-
-            await Plotly.addTraces(plot, traces);
-
-            if (activeRoute.lat.length) {
-                const middle = Math.floor(activeRoute.lat.length / 2);
-                await Plotly.relayout(plot, {
-                    "map.center": {
-                        lat: activeRoute.lat[middle],
-                        lon: activeRoute.lon[middle]
-                    },
-                    "map.zoom": 8
-                });
-            }
-        }
-
-        function selectReturnedRoute() {
-            if (!routeOptions) return;
-
-            const route = routeOptions[selectedProfile];
-            const labels = {
-                "driving-car": "Driving",
-                "cycling-regular": "Biking",
-                "foot-walking": "Walking"
-            };
-
-            if (!route || route.error) {
-                activeRoute = null;
-                renderDirections(null);
-
-                byId("route-result").textContent =
-                    labels[selectedProfile] +
-                    " is unavailable for this trip. " +
-                    (route && route.error
-                        ? route.error
-                        : "Try another mode.");
-
-                refreshMap();
-                return;
-            }
-
-            activeRoute = {
-                lat: route.lat,
-                lon: route.lon,
-                start: route.start,
-                end: route.end,
-                name: "Planned route"
-            };
-
-            renderDirections(route);
-
-            const avoidance = routeOptions._meta &&
-                routeOptions._meta.avoidance_active;
-
-            byId("route-result").textContent =
-                labels[selectedProfile] + " route: " +
-                formatDistance(route.distance) + ", " +
-                formatDuration(route.duration) + ". " +
-                (avoidance
-                    ? "Known hazard zones were sent to the routing service."
-                    : "No active hazard-avoidance zones were available.");
-
-            refreshMap();
-        }
-
-        async function refreshSatelliteStatus() {
-            const status = byId("satellite-status");
-
-            try {
-                const response = await fetch(
-                    "/api/satellite-status",
-                    { cache: "no-store" }
-                );
-
-                if (!response.ok) {
-                    throw new Error("Satellite status is unavailable");
-                }
-
-                const data = await response.json();
-
-                if (!data.configured) {
-                    status.textContent =
-                        "NASA FIRMS is not configured. Set FIRMS_API_KEY " +
-                        "in your Render environment variables.";
-                } else if (data.count > 0) {
-                    status.textContent =
-                        "NASA FIRMS is configured. " + data.count +
-                        " detections were returned for the monitored area.";
-                } else {
-                    status.textContent =
-                        "NASA FIRMS is configured, but no recent " +
-                        "detections were returned for this area.";
-                }
-            } catch (error) {
-                status.textContent =
-                    "Unable to retrieve satellite status. Check the " +
-                    "server logs and API configuration.";
-            }
-        }
-
-        byId("satellite-toggle").addEventListener("change", event => {
-            satelliteLayerVisible = event.target.checked;
-
-            applySatelliteVisibility(
-                document.querySelector("#map-root .js-plotly-plot")
-            );
-        });
-
-        async function refreshPanels() {
-            try {
-                const [cameraResponse, eventResponse] = await Promise.all([
-                    fetch("/api/cameras/status", { cache: "no-store" }),
-                    fetch("/api/device-events?limit=10", {
-                        cache: "no-store"
-                    })
-                ]);
-
-                if (!cameraResponse.ok || !eventResponse.ok) {
-                    throw new Error("Status endpoints unavailable");
-                }
-
-                const cameraData = await cameraResponse.json();
-                const eventData = await eventResponse.json();
-
-                const cameras = cameraData.cameras || [];
-                const events = eventData.events || [];
-
-                byId("metric-cameras").textContent = cameras.length;
-
-                byId("camera-count").textContent =
-                    cameras.filter(camera => camera.status === "online")
-                        .length + " online";
-
-                byId("metric-unconfirmed").textContent =
-                    events.filter(event =>
-                        event.status === "unconfirmed"
-                    ).length;
-
-                byId("metric-confirmed").textContent =
-                    events.filter(event =>
-                        event.status === "confirmed"
-                    ).length;
-
-                byId("cameras-list").innerHTML = cameras.length
-                    ? cameras.map(camera => `
-                        <div class="entry">
-                            <div class="entry-top">
-                                <span class="entry-dot"
-                                    style="background:${statusColor(
-                                        camera.status
-                                    )}"></span>
-                                <strong>${escapeHtml(
-                                    camera.name || camera.camera_id
-                                )}</strong>
-                                <span class="entry-state">${
-                                    escapeHtml(camera.status)
-                                }</span>
-                            </div>
-                            <div class="entry-detail">
-                                ${escapeHtml(camera.camera_id)}<br>
-                                ${Number(camera.latitude).toFixed(5)},
-                                ${Number(camera.longitude).toFixed(5)}
-                            </div>
+                return `
+                    <div class="entry">
+                        <div class="entry-top">
+                            <span class="status-dot" style="background:${color}"></span>
+                            <strong>${escapeHtml(
+                                event.camera_id || "Camera"
+                            )} · ${escapeHtml(
+                                event.magnitude || "Unknown"
+                            )}</strong>
+                            <span class="status-badge ${badgeClass(state)}">
+                                ${escapeHtml(state.replace("_", " "))}
+                            </span>
                         </div>
-                    `).join("")
-                    : '<div class="empty">No cameras registered. ' +
-                      'Register one through the protected camera API.</div>';
+                        <div class="entry-details">
+                            ${Number(event.fire_size_percent || 0).toFixed(1)}% hot thermal pixels<br>
+                            Maximum temperature:
+                            ${Number(event.max_temperature_c || 0).toFixed(1)} C<br>
+                            Detection method:
+                            ${escapeHtml(event.detection_method || "thermal")}<br>
+                            ${escapeHtml(event.timestamp || "")}
+                        </div>
+                        ${imageLink}
+                        ${videoLink}
+                    </div>
+                `;
+            }).join("")
+            : '<div class="empty-state">No detections have been received. The map is ready for registered camera events and available public fire data.</div>';
 
-                byId("events-list").innerHTML = events.length
-                    ? events.map(event => {
-                        const video = event.video
-                            ? `<br><a href="/${escapeHtml(event.video)}"
-                                target="_blank" rel="noopener">
-                                Open event video</a>`
-                            : "";
+        byId("event-count").textContent =
+            events.length + (events.length === 1 ? " event" : " events");
 
-                        const image = event.image
-                            ? `<br><a href="/${escapeHtml(event.image)}"
-                                target="_blank" rel="noopener">
-                                View snapshot</a>`
-                            : "";
+        applyGlobalSearch();
 
-                        return `
-                            <div class="entry">
-                                <div class="entry-top">
-                                    <span class="entry-dot"
-                                        style="background:${statusColor(
-                                            event.status
-                                        )}"></span>
-                                    <strong>${escapeHtml(
-                                        event.camera_id
-                                    )} - ${escapeHtml(
-                                        event.magnitude || "Unknown"
-                                    )}</strong>
-                                    <span class="entry-state">${
-                                        escapeHtml(event.status)
-                                    }</span>
-                                </div>
-                                <div class="entry-detail">
-                                    ${Number(
-                                        event.fire_size_percent || 0
-                                    ).toFixed(1)}% hot thermal pixels<br>
-                                    Maximum temperature:
-                                    ${Number(
-                                        event.max_temperature_c || 0
-                                    ).toFixed(1)} C<br>
-                                    Detection method:
-                                    ${escapeHtml(
-                                        event.detection_method || "thermal"
-                                    )}<br>
-                                    ${escapeHtml(event.timestamp || "")}
-                                </div>
-                                ${video}${image}
-                            </div>
-                        `;
-                    }).join("")
-                    : '<div class="empty">No detections have been received.</div>';
+    } catch (error) {
+        console.error(error);
 
-                byId("event-count").textContent =
-                    events.length + " event" +
-                    (events.length === 1 ? "" : "s");
+        byId("events-list").innerHTML =
+            '<div class="empty-state">Unable to load recent events. Check the server logs and refresh.</div>';
+    }
+}
 
-            } catch (error) {
-                console.error(error);
+async function refreshSatelliteStatus() {
+    const element = byId("satellite-status");
 
-                byId("events-list").innerHTML =
-                    '<div class="empty">Unable to load event history. ' +
-                    'Check that the server API is running.</div>';
+    try {
+        const response = await fetch(
+            "/api/satellite-status",
+            {cache: "no-store"}
+        );
+
+        if (!response.ok) {
+            throw new Error("Satellite status unavailable");
+        }
+
+        const payload = await response.json();
+
+        if (payload.configured === false) {
+            element.textContent =
+                "NASA FIRMS is not configured. Add FIRMS_API_KEY to Render environment variables.";
+        } else if (payload.count > 0) {
+            element.textContent =
+                "NASA FIRMS is configured. " +
+                payload.count +
+                " satellite detections are loaded.";
+        } else {
+            element.textContent =
+                "NASA FIRMS is configured, but no detections are currently loaded for the monitoring area.";
+        }
+
+    } catch (error) {
+        element.textContent =
+            "Satellite status is unavailable. Check the server logs.";
+    }
+}
+
+async function refreshMap() {
+    try {
+        const response = await fetch(
+            "/api/map-figure",
+            {cache: "no-store"}
+        );
+
+        if (!response.ok) {
+            throw new Error("Map endpoint failed");
+        }
+
+        const figure = await response.json();
+        const plot = document.querySelector(
+            "#map-root .js-plotly-plot"
+        );
+
+        if (plot && window.Plotly) {
+            await Plotly.react(
+                plot,
+                figure.data,
+                figure.layout,
+                {
+                    responsive: true,
+                    scrollZoom: true,
+                    displaylogo: false
+                }
+            );
+
+            applySatelliteVisibility(plot);
+
+            if (activeRoute) {
+                await renderActiveRoute();
             }
         }
 
-        async function refreshMap() {
+        const now = new Date();
+
+        byId("map-status").textContent =
+            "Updated " + now.toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+
+        byId("last-update").textContent =
+            now.toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+
+        await Promise.all([refreshPanels(), refreshHealth()]);
+
+    } catch (error) {
+        console.error(error);
+        byId("map-status").textContent = "Map update failed";
+        await refreshHealth();
+    }
+}
+
+function setupAutocomplete(inputId, menuId) {
+    const input = byId(inputId);
+    const menu = byId(menuId);
+
+    let timer = null;
+    let lastQuery = "";
+
+    const specificity = {
+        venue: 0,
+        address: 1,
+        street: 2,
+        neighbourhood: 3,
+        locality: 4,
+        borough: 5,
+        localadmin: 6,
+        county: 7,
+        region: 8,
+        country: 9
+    };
+
+    function closeMenu() {
+        menu.classList.remove("open");
+        input.setAttribute("aria-expanded", "false");
+    }
+
+    function chooseSuggestion(item) {
+        input.value = item.label;
+        closeMenu();
+        input.dispatchEvent(new Event("change", {bubbles: true}));
+        input.focus();
+    }
+
+    function renderSuggestions(suggestions) {
+        const sorted = (suggestions || [])
+            .slice()
+            .sort((a, b) => {
+                const layerA = String(a.layer || "unknown").toLowerCase();
+                const layerB = String(b.layer || "unknown").toLowerCase();
+
+                return (
+                    (specificity[layerA] ?? 5) -
+                    (specificity[layerB] ?? 5)
+                ) || String(a.label).length - String(b.label).length;
+            })
+            .slice(0, 7);
+
+        menu.replaceChildren();
+
+        if (!sorted.length) {
+            menu.innerHTML =
+                '<div class="autocomplete-note">No matching locations found.</div>';
+            menu.classList.add("open");
+            input.setAttribute("aria-expanded", "true");
+            return;
+        }
+
+        sorted.forEach(item => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "autocomplete-option";
+            button.setAttribute("role", "option");
+
+            button.innerHTML = `
+                <span class="autocomplete-pin" aria-hidden="true">⌖</span>
+                <span class="autocomplete-copy">
+                    <span class="autocomplete-label"></span>
+                    <span class="autocomplete-kind"></span>
+                </span>
+            `;
+
+            button.querySelector(".autocomplete-label").textContent =
+                item.label;
+
+            button.querySelector(".autocomplete-kind").textContent =
+                (item.layer || "location") +
+                " · more specific results first";
+
+            // Prevent input blur before the click handler runs.
+            button.addEventListener("mousedown", event => {
+                event.preventDefault();
+            });
+
+            button.addEventListener("click", () => {
+                chooseSuggestion(item);
+            });
+
+            menu.appendChild(button);
+        });
+
+        menu.classList.add("open");
+        input.setAttribute("aria-expanded", "true");
+    }
+
+    input.addEventListener("input", () => {
+        const query = input.value.trim();
+
+        clearTimeout(timer);
+
+        if (query.length < 3) {
+            closeMenu();
+            menu.replaceChildren();
+            lastQuery = "";
+            return;
+        }
+
+        timer = setTimeout(async () => {
+            if (query === lastQuery) return;
+            lastQuery = query;
+
             try {
                 const response = await fetch(
-                    "/api/map-figure",
-                    { cache: "no-store" }
+                    "/autocomplete?query=" + encodeURIComponent(query),
+                    {cache: "no-store"}
                 );
 
                 if (!response.ok) {
-                    throw new Error("Map API request failed");
+                    throw new Error("Location search is unavailable");
                 }
 
-                const figure = await response.json();
-                const plot = document.querySelector(
-                    "#map-root .js-plotly-plot"
-                );
+                const payload = await response.json();
 
-                if (plot && window.Plotly) {
-                    await Plotly.react(
-                        plot,
-                        figure.data,
-                        figure.layout,
-                        {
-                            responsive: true,
-                            scrollZoom: true,
-                            displaylogo: false
-                        }
-                    );
+                if (input.value.trim() !== query) return;
 
-                    applySatelliteVisibility(plot);
-
-                    if (activeRoute) {
-                        await drawActiveRoute();
-                    }
-                }
-
-                byId("map-status").textContent =
-                    "Map updated " + new Date().toLocaleTimeString();
-
-                await refreshPanels();
+                renderSuggestions(payload.suggestions || []);
 
             } catch (error) {
-                console.error(error);
-                byId("map-status").textContent =
-                    "Map update failed";
+                menu.innerHTML =
+                    '<div class="autocomplete-note">Location search unavailable. Check routing configuration.</div>';
+
+                menu.classList.add("open");
+                input.setAttribute("aria-expanded", "true");
             }
-        }
+        }, 260);
+    });
 
-        function setupAutocomplete(inputId, listId) {
-            const input = byId(inputId);
-            const list = byId(listId);
-            let timeout = null;
+    input.addEventListener("keydown", event => {
+        if (!menu.classList.contains("open")) return;
 
-            input.addEventListener("input", () => {
-                clearTimeout(timeout);
+        const options = [...menu.querySelectorAll("button")];
+        const activeIndex = options.indexOf(document.activeElement);
 
-                const query = input.value.trim();
-
-                if (query.length < 3) {
-                    list.replaceChildren();
-                    return;
-                }
-
-                timeout = setTimeout(async () => {
-                    try {
-                        const response = await fetch(
-                            "/autocomplete?query=" +
-                            encodeURIComponent(query),
-                            { cache: "no-store" }
-                        );
-
-                        if (!response.ok) return;
-
-                        const data = await response.json();
-
-                        if (input.value.trim() !== query) return;
-
-                        list.replaceChildren(
-                            ...(data.suggestions || []).map(suggestion => {
-                                const option =
-                                    document.createElement("option");
-                                option.value = suggestion.label;
-                                return option;
-                            })
-                        );
-
-                    } catch (error) {
-                        console.debug("Address suggestions unavailable");
-                    }
-                }, 300);
-            });
-        }
-
-        setupAutocomplete("route-start", "start-suggestions");
-        setupAutocomplete("route-end", "end-suggestions");
-
-        byId("route-form").addEventListener("submit", async event => {
+        if (event.key === "ArrowDown" && options.length) {
             event.preventDefault();
+            options[Math.min(activeIndex + 1, options.length - 1)].focus();
+        } else if (event.key === "ArrowUp" && options.length) {
+            event.preventDefault();
+            options[Math.max(activeIndex - 1, 0)].focus();
+        } else if (event.key === "Escape") {
+            closeMenu();
+        }
+    });
 
-            const button = byId("route-submit");
-            const result = byId("route-result");
+    input.addEventListener("blur", () => {
+        setTimeout(closeMenu, 180);
+    });
 
-            button.disabled = true;
-            button.textContent = "Calculating...";
-            result.textContent =
-                "Calculating route and checking available hazard zones.";
+    input.addEventListener("focus", () => {
+        if (menu.children.length && input.value.trim().length >= 3) {
+            menu.classList.add("open");
+            input.setAttribute("aria-expanded", "true");
+        }
+    });
+}
 
-            activeRoute = null;
-            routeOptions = null;
-            renderDirections(null);
+setupAutocomplete("route-start", "start-suggestions");
+setupAutocomplete("route-end", "end-suggestions");
+
+byId("use-current-location").addEventListener("click", () => {
+    const button = byId("use-current-location");
+    const input = byId("route-start");
+
+    if (!navigator.geolocation) {
+        setRouteMessage(
+            "This browser does not support location access. Enter a starting address instead.",
+            "error"
+        );
+        return;
+    }
+
+    button.disabled = true;
+
+    setRouteMessage(
+        "Getting your current location. Allow location access when your browser asks..."
+    );
+
+    navigator.geolocation.getCurrentPosition(
+        async position => {
+            const latitude = position.coords.latitude;
+            const longitude = position.coords.longitude;
+
+            // Coordinates work directly with /routes if reverse geocoding fails.
+            input.value =
+                latitude.toFixed(6) + ", " + longitude.toFixed(6);
+
+            setRouteMessage(
+                "Current coordinates found. Looking up the nearest address..."
+            );
 
             try {
-                const response = await fetch("/routes", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        start: byId("route-start").value.trim(),
-                        end: byId("route-end").value.trim()
-                    })
-                });
+                const response = await fetch(
+                    "/reverse?lat=" + encodeURIComponent(latitude) +
+                    "&lon=" + encodeURIComponent(longitude),
+                    {cache: "no-store"}
+                );
 
-                const data = await response.json();
+                if (response.ok) {
+                    const payload = await response.json();
 
-                if (!response.ok) {
-                    throw new Error(
-                        data.detail || "The routing service failed."
+                    if (payload.label) {
+                        input.value = payload.label;
+                    }
+
+                    setRouteMessage(
+                        "Starting point set to your current location.",
+                        "success"
+                    );
+                } else {
+                    setRouteMessage(
+                        "Current coordinates added. Address lookup is unavailable; route planning can still use the coordinates.",
+                        "success"
                     );
                 }
 
-                routeOptions = data;
-                selectReturnedRoute();
-
             } catch (error) {
-                result.textContent =
-                    error.message || "Unable to calculate the route.";
-
-                console.error(error);
-
-            } finally {
-                button.disabled = false;
-                button.textContent = "Plan route";
+                setRouteMessage(
+                    "Current coordinates added. Address lookup was unavailable.",
+                    "success"
+                );
             }
+
+            button.disabled = false;
+        },
+        error => {
+            button.disabled = false;
+
+            const messages = {
+                1: "Location permission was denied. Allow location access in your browser settings or enter an address.",
+                2: "Your current location could not be determined. Try again or enter an address.",
+                3: "Location lookup timed out. Try again."
+            };
+
+            setRouteMessage(
+                messages[error.code] ||
+                "Unable to read your current location.",
+                "error"
+            );
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 30000
+        }
+    );
+});
+
+byId("route-form").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const button = byId("route-submit");
+    const start = byId("route-start").value.trim();
+    const end = byId("route-end").value.trim();
+
+    if (!start || !end) {
+        setRouteMessage(
+            "Enter both a starting location and destination.",
+            "error"
+        );
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = "Calculating route...";
+
+    setRouteMessage(
+        "Calculating routes and checking available hotspot zones..."
+    );
+
+    activeRoute = null;
+    routeResults = null;
+    showDirections(null);
+
+    try {
+        const response = await fetch("/routes", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({start, end})
         });
 
-        byId("clear-route").addEventListener("click", async () => {
-            activeRoute = null;
-            routeOptions = null;
+        const payload = await response.json();
 
-            renderDirections(null);
-            byId("route-result").textContent = "Route cleared.";
+        if (!response.ok) {
+            throw new Error(
+                payload.detail ||
+                payload.error ||
+                "Routing service is unavailable."
+            );
+        }
 
-            await refreshMap();
-        });
+        if (payload.error) {
+            throw new Error(payload.error);
+        }
 
-        byId("refresh-button").addEventListener("click", async () => {
-            await refreshMap();
-            await refreshSatelliteStatus();
-        });
+        routeResults = payload;
+        showSelectedRoute();
 
-        refreshPanels();
-        refreshSatelliteStatus();
+    } catch (error) {
+        routeResults = null;
+        activeRoute = null;
+        showDirections(null);
 
-        setInterval(refreshMap, 30000);
-        setInterval(refreshSatelliteStatus, 60000);
-    </script>
+        setRouteMessage(
+            error.message ||
+            "Unable to calculate the route. Check ORS_API_KEY.",
+            "error"
+        );
+
+        console.error(error);
+
+    } finally {
+        button.disabled = false;
+
+        button.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="1.8"
+                 aria-hidden="true">
+                <path d="M4 5h6v6H4z"></path>
+                <path d="M14 13h6v6h-6z"></path>
+                <path d="M10 8h3a3 3 0 0 1 3 3v2"></path>
+            </svg>
+            Find safest route
+        `;
+    }
+});
+
+function showSelectedRoute() {
+    if (!routeResults) return;
+
+    const route = routeResults[selectedProfile];
+
+    if (!route || route.error) {
+        activeRoute = null;
+        showDirections(null);
+
+        setRouteMessage(
+            modeLabel(selectedProfile) + " is unavailable. " +
+            (route && route.error ? route.error : "No route returned."),
+            "error"
+        );
+
+        refreshMap();
+        return;
+    }
+
+    activeRoute = {
+        lat: route.lat || [],
+        lon: route.lon || [],
+        start: route.start,
+        end: route.end
+    };
+
+    showDirections(route);
+
+    const avoidance = Boolean(
+        routeResults._meta &&
+        routeResults._meta.avoidance_active
+    );
+
+    setRouteMessage(
+        modeLabel(selectedProfile) + " route: " +
+        formatDistance(route.distance) + ", " +
+        formatDuration(route.duration) + ". " +
+        (
+            avoidance
+                ? "Available hotspot zones were sent to the routing service."
+                : "No active avoid-zone data was available."
+        ),
+        "success"
+    );
+
+    refreshMap();
+}
+
+byId("clear-route").addEventListener("click", async () => {
+    activeRoute = null;
+    routeResults = null;
+    showDirections(null);
+    setRouteMessage("Route cleared.");
+    await refreshMap();
+});
+
+byId("refresh").addEventListener("click", async () => {
+    await Promise.all([refreshMap(), refreshSatelliteStatus()]);
+});
+
+byId("fit-map").addEventListener("click", async () => {
+    activeRoute = null;
+    routeResults = null;
+    showDirections(null);
+    await refreshMap();
+});
+
+byId("satellite-toggle").addEventListener("change", event => {
+    satelliteVisible = event.target.checked;
+
+    applySatelliteVisibility(
+        document.querySelector("#map-root .js-plotly-plot")
+    );
+});
+
+function applyGlobalSearch() {
+    const query = byId("global-search").value.trim().toLowerCase();
+
+    document.querySelectorAll(
+        "#cameras-list .entry, #events-list .entry"
+    ).forEach(entry => {
+        entry.style.display =
+            !query || entry.textContent.toLowerCase().includes(query)
+                ? ""
+                : "none";
+    });
+}
+
+byId("global-search").addEventListener("input", applyGlobalSearch);
+
+refreshSatelliteStatus();
+refreshMap();
+
+setInterval(refreshMap, 30000);
+setInterval(refreshSatelliteStatus, 60000);
+
+window.addEventListener("resize", () => {
+    const plot = document.querySelector(
+        "#map-root .js-plotly-plot"
+    );
+
+    if (plot && window.Plotly) {
+        Plotly.Plots.resize(plot);
+    }
+});
+</script>
 </body>
 </html>
