@@ -22,6 +22,9 @@ Pi #1 / Pi #2 / Pi #N
 
 ## What is implemented
 
+The dashboard is styled as a clean enterprise monitoring console with a Carto light basemap, header search, health badge, floating camera/fire metrics, and a route-planning panel for driving, biking, and walking. The route panel uses the existing `/routes` and `/autocomplete` endpoints; the satellite toggle controls map-layer visibility and does not disable route hazard avoidance.
+
+
 - SQLite replaces live CSV storage.
 - Camera keys are stored hashed for new cameras; legacy plaintext keys remain readable for migration.
 - Fixed server-side latitude/longitude is authoritative; no GPS is required on the Pi.

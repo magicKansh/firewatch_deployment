@@ -2,6 +2,11 @@
 
 ## What changed
 
+## Dashboard redesign
+
+The current `templates/index.html` and `map.py` provide the enterprise-style Firewatch dashboard: a top header with global search and service-health status, floating camera/event metrics, a light Carto Positron map, top-right navigation controls for driving/biking/walking, turn-by-turn directions, and a NASA FIRMS visibility switch. No React build step is needed because this repository uses FastAPI, Jinja2, and Plotly directly.
+
+
 The server and Raspberry Pi dependencies are now separated. Render installs only the server packages, so it will not try to compile `picamera2`, `python-prctl`, or other Raspberry Pi-only libraries.
 
 - `requirements.txt` — central Firewatch server

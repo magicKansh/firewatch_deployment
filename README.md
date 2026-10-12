@@ -4,6 +4,8 @@ A web app for locating active wildfires and routing around them. It combines use
 
 **Live site:** https://firewatch-deployment.onrender.com
 
+The dashboard uses a light Carto basemap with a floating monitoring sidebar and top-right route planner. It supports driving, biking, walking, turn-by-turn directions, camera event review, and an optional NASA FIRMS overlay.
+
 ---
 
 ## How to run it
