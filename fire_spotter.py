@@ -1,25 +1,25 @@
 from PIL import Image
 import numpy as np
 
-IMAGE_PATH = "images/thermal.jpg"
+image_path = "images/thermal.jpg"
 
-ROWS = 8
-COLS = 8
+rows = 8
+cols = 8
 
-image = Image.open(IMAGE_PATH).convert("RGB")
+image = Image.open(image_path).convert("RGB")
 image_array = np.array(image)
 
 height, width, _ = image_array.shape
 
-chunk_height = height // ROWS
-chunk_width = width // COLS
+chunk_height = height
+chunk_width = width
 
-print(f"Image size: {width} x {height}")
-print(f"Chunk size: {chunk_width} x {chunk_height}")
+print(f"image size: {width} x {height}")
+print(f"chunk size: {chunk_width} x {chunk_height}")
 print()
 
-for row in range(ROWS):
-    for col in range(COLS):
+for row in range(rows):
+    for col in range(cols):
 
         y1 = row * chunk_height
         y2 = (row + 1) * chunk_height
