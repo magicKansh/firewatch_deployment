@@ -108,11 +108,32 @@ cp camera_config.json.example camera_config.json
 
 Edit `camera_config.json` with the generated `camera_key` and the camera's fixed registered coordinates. The server's registered coordinates are authoritative; the Pi does not need a GPS receiver.
 
-Then run (replace the address with your deployed Render URL):
+Put the server address (and any tuning values from `.env.example`) in a `.env` file next to the script:
 
 ```bash
-export FIREWATCH_SERVER_URL="https://your-service.onrender.com"
+echo 'FIREWATCH_SERVER_URL=https://your-service.onrender.com' > .env
+```
+
+Test it once in the foreground (Ctrl+C to stop):
+
+```bash
+set -a; . ./.env; set +a
 python sensor_monitor.py
+```
+
+Then install it as a service, so it starts at boot and restarts by itself if it crashes or loses the sensor:
+
+```bash
+./install-pi-service.sh
+```
+
+The script fills in your username and folder, installs `firewatch-node.service` into systemd and starts it. Useful commands afterwards:
+
+```bash
+systemctl status firewatch-node        # is it running?
+journalctl -u firewatch-node -f        # live log (one line per sample)
+sudo systemctl restart firewatch-node  # after editing .env or pulling new code
+sudo systemctl disable --now firewatch-node  # stop it and stop starting at boot
 ```
 
 Enable I2C (`sudo raspi-config` -> Interface Options -> I2C) before the first run.

@@ -1,0 +1,19 @@
+# systemd unit for the Firewatch Pi node. Install with ./install-pi-service.sh,
+# which fills in __USER__ and __DIR__ for this Pi.
+[Unit]
+Description=Firewatch thermal camera node
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__DIR__/.venv/bin/python sensor_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
