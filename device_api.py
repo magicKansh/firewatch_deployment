@@ -5,15 +5,18 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 from database import camera_key_matches, get_camera, get_connection
 from fire_data import invalidate_cache
 from notifications import send_fire_confirmation
 
 router = APIRouter()
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 IMAGE_DIR = Path(os.getenv("FIREWATCH_IMAGE_DIR", Path(__file__).resolve().parent / "images"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
 MAX_VIDEO_BYTES = int(os.getenv("MAX_VIDEO_BYTES", str(30 * 1024 * 1024)))
@@ -46,7 +49,7 @@ def _authenticate(camera_id, camera_key):
     return camera
 
 
-def _save_image(image, event_id):
+def _save_image(image, event_id, name_suffix=""):
     if not image:
         return ""
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,7 +59,7 @@ def _save_image(image, event_id):
     content = image.file.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Image too large.")
-    name = f"{event_id}{suffix}"
+    name = f"{event_id}{name_suffix}{suffix}"
     (IMAGE_DIR / name).write_bytes(content)
     return f"images/{name}"
 
@@ -92,7 +95,7 @@ def _find_open_event(conn, camera_id, now):
     ).fetchone()
 
 
-def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, duration_seconds, image_path, video_path, visual_fire_score, detection_method):
+def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, duration_seconds, image_path, video_path, photo_path, visual_fire_score, detection_method):
     score, magnitude = _severity(fire_size_percent, duration_seconds, max_temperature_c)
     old_score = float(row["severity_index"])
     old_temp = float(row["max_temperature_c"])
@@ -105,11 +108,12 @@ def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, durat
            max_temperature_c=?,duration_seconds=?,severity_index=?,magnitude=?,
            image=CASE WHEN ? <> '' THEN ? ELSE image END,
            video=CASE WHEN ? <> '' THEN ? ELSE video END,
+           photo=CASE WHEN ? <> '' THEN ? ELSE photo END,
            visual_fire_score=MAX(visual_fire_score, ?), detection_method=?, status=? WHERE event_id=?""",
         (now.isoformat(), now.isoformat(), max(old_area, fire_size_percent),
          max(old_temp, max_temperature_c), max(old_duration, duration_seconds), new_score,
          magnitude if score >= old_score else row["magnitude"], image_path, image_path,
-         video_path, video_path, visual_fire_score, detection_method[:80],
+         video_path, video_path, photo_path, photo_path, visual_fire_score, detection_method[:80],
          new_status, row["event_id"]),
     )
     conn.execute(
@@ -132,6 +136,7 @@ async def camera_event(
     duration_seconds: float = Form(...),
     image: UploadFile | None = File(None),
     video: UploadFile | None = File(None),
+    photo: UploadFile | None = File(None),
     visual_fire_score: float = Form(0.0),
     detection_method: str = Form("thermal"),
 ):
@@ -150,15 +155,17 @@ async def camera_event(
     now = utc_now()
     image_path = ""
     video_path = ""
+    photo_path = ""
     # Registered server coordinates are authoritative; submitted coordinates are diagnostics only.
     with get_connection() as conn:
         existing = _find_open_event(conn, camera_id, now)
         if existing:
             image_path = _save_image(image, existing["event_id"]) if image else ""
             video_path = _save_video(video, existing["event_id"]) if video else ""
+            photo_path = _save_image(photo, existing["event_id"], "_photo") if photo else ""
             event_id, created, score, magnitude = _update_existing(
                 conn, existing, now, fire_size_percent, max_temperature_c, duration_seconds,
-                image_path, video_path, visual_fire_score, detection_method
+                image_path, video_path, photo_path, visual_fire_score, detection_method
             )
             conn.execute(
                 "UPDATE cameras SET last_seen_at=?,status='online' WHERE camera_id=?",
@@ -172,6 +179,7 @@ async def camera_event(
         score, magnitude = _severity(fire_size_percent, duration_seconds, max_temperature_c)
         image_path = _save_image(image, event_id) if image else ""
         video_path = _save_video(video, event_id) if video else ""
+        photo_path = _save_image(photo, event_id, "_photo") if photo else ""
         row = {
             "event_id": event_id, "camera_id": camera_id, "timestamp": now.isoformat(),
             "first_seen_at": now.isoformat(), "last_seen_at": now.isoformat(),
@@ -179,18 +187,18 @@ async def camera_event(
             "fire_size_percent": round(fire_size_percent, 2), "max_temperature_c": round(max_temperature_c, 2),
             "duration_seconds": round(duration_seconds, 1), "severity_index": score,
             "magnitude": magnitude, "status": "unconfirmed", "image": image_path,
-            "video": video_path, "visual_fire_score": round(visual_fire_score, 4),
+            "video": video_path, "photo": photo_path, "visual_fire_score": round(visual_fire_score, 4),
             "detection_method": detection_method[:80],
             "place": camera.get("name") or camera_id, "source": "device", "dedupe_key": _dedupe_key(camera_id),
         }
         conn.execute(
             """INSERT INTO device_events
             (event_id,camera_id,timestamp,first_seen_at,last_seen_at,latitude,longitude,fire_size_percent,
-             max_temperature_c,duration_seconds,severity_index,magnitude,status,image,video,visual_fire_score,detection_method,place,source,dedupe_key)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             max_temperature_c,duration_seconds,severity_index,magnitude,status,image,video,photo,visual_fire_score,detection_method,place,source,dedupe_key)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             tuple(row[k] for k in ["event_id","camera_id","timestamp","first_seen_at","last_seen_at","latitude","longitude",
                                    "fire_size_percent","max_temperature_c","duration_seconds","severity_index","magnitude",
-                                   "status","image","video","visual_fire_score","detection_method","place","source","dedupe_key"]),
+                                   "status","image","video","photo","visual_fire_score","detection_method","place","source","dedupe_key"]),
         )
         conn.execute(
             """INSERT INTO event_observations(event_id,timestamp,fire_size_percent,max_temperature_c,duration_seconds,image)
@@ -229,35 +237,74 @@ async def heartbeat(
             "heartbeat_timeout_seconds": HEARTBEAT_TIMEOUT_SECONDS}
 
 
-@router.get("/confirm/{event_id}/{answer}")
-def confirm_event(event_id: str, answer: str, token: str):
-    if answer not in {"yes", "no"}:
-        raise HTTPException(status_code=400, detail="Invalid confirmation.")
+def _check_token(conn, event_id, token):
+    row = conn.execute("SELECT * FROM confirmation_tokens WHERE event_id=?", (event_id,)).fetchone()
+    if not row or not token or not hmac.compare_digest(row["token_hash"], _hash_token(token)):
+        raise HTTPException(status_code=403, detail="Invalid review link.")
+    return row
+
+
+def _review_page(request, event, state, status_code=200):
+    return templates.TemplateResponse(
+        request=request, name="review.html", status_code=status_code,
+        context={"event": event, "state": state},
+    )
+
+
+@router.get("/review/{event_id}", response_class=HTMLResponse)
+def review_page(request: Request, event_id: str, token: str = ""):
+    """Show the evidence for one event. Opening this page never changes anything, so
+    link previews and email security scanners cannot answer on the reviewer's behalf."""
+    with get_connection() as conn:
+        token_row = _check_token(conn, event_id, token)
+        event = dict(conn.execute("SELECT * FROM device_events WHERE event_id=?", (event_id,)).fetchone())
+    event["token"] = token
+    if token_row["used_at"]:
+        return _review_page(request, event, "done")
+    if datetime.fromisoformat(token_row["expires_at"]) < utc_now():
+        return _review_page(request, event, "expired", status_code=403)
+    return _review_page(request, event, "open")
+
+
+@router.post("/review/{event_id}", response_class=HTMLResponse)
+def submit_review(request: Request, event_id: str, token: str = Form(...), answer: str = Form(...)):
+    if answer not in {"fire", "not_fire"}:
+        raise HTTPException(status_code=400, detail="Invalid answer.")
     now = utc_now()
     with get_connection() as conn:
-        row = conn.execute("SELECT * FROM confirmation_tokens WHERE event_id=?", (event_id,)).fetchone()
-        if not row or not hmac.compare_digest(row["token_hash"], _hash_token(token)):
-            raise HTTPException(status_code=403, detail="Invalid confirmation token.")
-        if row["used_at"] or datetime.fromisoformat(row["expires_at"]) < now:
-            raise HTTPException(status_code=403, detail="Confirmation token expired or already used.")
-        status = "confirmed" if answer == "yes" else "false_alarm"
-        if status == "confirmed":
-            conn.execute("UPDATE device_events SET status=?,confirmed_at=? WHERE event_id=?", (status, now.isoformat(), event_id))
+        token_row = _check_token(conn, event_id, token)
+        if datetime.fromisoformat(token_row["expires_at"]) < now:
+            raise HTTPException(status_code=403, detail="Review link expired.")
+        # Claim the token atomically so two simultaneous answers cannot both apply.
+        claimed = conn.execute(
+            "UPDATE confirmation_tokens SET used_at=? WHERE event_id=? AND used_at IS NULL",
+            (now.isoformat(), event_id),
+        ).rowcount
+        if not claimed:
+            raise HTTPException(status_code=403, detail="This event has already been reviewed.")
+        if answer == "fire":
+            conn.execute("UPDATE device_events SET status='confirmed',confirmed_at=? WHERE event_id=?", (now.isoformat(), event_id))
         else:
-            conn.execute("UPDATE device_events SET status=?,false_alarm_at=? WHERE event_id=?", (status, now.isoformat(), event_id))
-        conn.execute("UPDATE confirmation_tokens SET used_at=? WHERE event_id=?", (now.isoformat(), event_id))
+            conn.execute("UPDATE device_events SET status='false_alarm',false_alarm_at=? WHERE event_id=?", (now.isoformat(), event_id))
+        event = dict(conn.execute("SELECT * FROM device_events WHERE event_id=?", (event_id,)).fetchone())
     invalidate_cache()
-    return RedirectResponse(url=f"/?confirmed={status}", status_code=303)
+    return _review_page(request, event, "done")
+
+
+@router.get("/confirm/{event_id}/{answer}")
+def legacy_confirm_link(event_id: str, answer: str, token: str = ""):
+    # Alerts sent before the review page existed: show the evidence instead of acting on a GET.
+    return RedirectResponse(url=f"/review/{quote(event_id)}?token={quote(token)}", status_code=303)
 
 
 @router.get("/api/device-events")
-def device_events(status: str | None = None, limit: int = 100):
+def device_events(limit: int = 100):
+    """Public event feed: human-confirmed fires only."""
     limit = max(1, min(limit, 500))
     with get_connection() as conn:
-        if status:
-            rows = conn.execute("SELECT * FROM device_events WHERE status=? ORDER BY timestamp DESC LIMIT ?", (status, limit)).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM device_events ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM device_events WHERE status='confirmed' ORDER BY timestamp DESC LIMIT ?", (limit,)
+        ).fetchall()
     return {"events": [dict(r) for r in rows]}
 
 

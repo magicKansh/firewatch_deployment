@@ -1,42 +1,47 @@
-"""Raspberry Pi node: thermal persistence + video flame heuristic + event clip upload.
+"""Raspberry Pi node: MLX90640 thermal sampling, heat-map snapshots and event upload.
 
-This is a conservative prototype detector, not a trained fire-classification model.
-Thermal/video evidence creates an UNCONFIRMED event for human review on Firewatch.
+Every SAMPLE_SECONDS the node reads one thermal frame and saves a heat-map snapshot to
+a temp folder. Cool snapshots are deleted. A hot snapshot triggers a short burst of
+extra frames; if most of them are hot too, the hottest frame's heat-map (plus a Pi
+Camera photo, when a camera is attached) is queued in PENDING_DIR and uploaded as an
+UNCONFIRMED event for human review. Queued files are only deleted after the server
+accepts them, so events survive network outages and reboots.
 """
+import functools
 import json
 import os
+import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-import board
-import busio
-import numpy as np
-import adafruit_mlx90640
 import requests
-from PIL import Image
-from picamera2 import Picamera2
-from picamera2.encoders import H264Encoder
-from picamera2.outputs import FfmpegOutput
+
+from thermal import analyze, render_heatmap
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = Path(os.getenv("FIREWATCH_CAMERA_CONFIG", str(BASE_DIR / "camera_config.json")))
-HOT_TEMP_C = float(os.getenv("HOT_TEMP_C", "80"))
-MIN_HOT_PERCENT = float(os.getenv("MIN_HOT_PERCENT", "10"))
-MIN_CLUSTER_PIXELS = int(os.getenv("MIN_CLUSTER_PIXELS", "6"))
-AMBIENT_DELTA_C = float(os.getenv("AMBIENT_DELTA_C", "25"))
-REQUIRED_FRAMES = int(os.getenv("REQUIRED_FRAMES", "5"))
-VISUAL_REQUIRED_FRAMES = int(os.getenv("VISUAL_REQUIRED_FRAMES", "4"))
-VISUAL_FIRE_THRESHOLD = float(os.getenv("VISUAL_FIRE_THRESHOLD", "0.015"))
-VISUAL_SAMPLE_SECONDS = float(os.getenv("VISUAL_SAMPLE_SECONDS", "0.5"))
-CLIP_SECONDS = int(os.getenv("FIREWATCH_CLIP_SECONDS", "6"))
-HEARTBEAT_SECONDS = int(os.getenv("HEARTBEAT_SECONDS", "30"))
+TEMP_DIR = Path(os.getenv("FIREWATCH_TEMP_DIR", str(Path(tempfile.gettempdir()) / "firewatch")))
+PENDING_DIR = Path(os.getenv("FIREWATCH_PENDING_DIR", str(BASE_DIR / "pending")))
 SERVER_URL = os.getenv("FIREWATCH_SERVER_URL", "http://localhost:8000").rstrip("/")
-SOFTWARE_VERSION = os.getenv("FIREWATCH_NODE_VERSION", "1.2-video")
+SOFTWARE_VERSION = os.getenv("FIREWATCH_NODE_VERSION", "2.0-thermal")
+
+HOT_TEMP_C = float(os.getenv("HOT_TEMP_C", "80"))
+AMBIENT_DELTA_C = float(os.getenv("AMBIENT_DELTA_C", "25"))
+MIN_CLUSTER_PIXELS = int(os.getenv("MIN_CLUSTER_PIXELS", "6"))
+MIN_HOT_PERCENT = float(os.getenv("MIN_HOT_PERCENT", "0"))
+SAMPLE_SECONDS = float(os.getenv("SAMPLE_SECONDS", "60"))
+CONFIRM_FRAMES = int(os.getenv("CONFIRM_FRAMES", "5"))
+CONFIRM_INTERVAL_SECONDS = float(os.getenv("CONFIRM_INTERVAL_SECONDS", "1"))
+EVENT_RESET_SAMPLES = int(os.getenv("EVENT_RESET_SAMPLES", "3"))
+MAX_PENDING_EVENTS = int(os.getenv("MAX_PENDING_EVENTS", "20"))
+HEARTBEAT_SECONDS = int(os.getenv("HEARTBEAT_SECONDS", "30"))
+SENSOR_READ_ATTEMPTS = 3
 
 
-def load_config():
-    with CONFIG_PATH.open(encoding="utf-8") as f:
+def load_config(path=CONFIG_PATH):
+    with Path(path).open(encoding="utf-8") as f:
         cfg = json.load(f)
     required = ["camera_id", "camera_key", "latitude", "longitude"]
     missing = [key for key in required if key not in cfg]
@@ -49,69 +54,174 @@ def load_config():
     return cfg
 
 
-def create_thermal():
-    i2c = busio.I2C(board.SCL, board.SDA, frequency=800000)
-    mlx = adafruit_mlx90640.MLX90640(i2c)
-    mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_8_HZ
-    return mlx
+def _analyze(temps):
+    return analyze(temps, HOT_TEMP_C, AMBIENT_DELTA_C, MIN_CLUSTER_PIXELS, MIN_HOT_PERCENT)
 
 
-def largest_component(mask):
-    height, width = mask.shape
-    seen = np.zeros_like(mask, dtype=bool)
-    largest = 0
-    for y, x in zip(*np.where(mask)):
-        if seen[y, x]:
-            continue
-        stack = [(y, x)]
-        seen[y, x] = True
-        count = 0
-        while stack:
-            cy, cx = stack.pop()
-            count += 1
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    if not (dy or dx):
-                        continue
-                    ny, nx = cy + dy, cx + dx
-                    if 0 <= ny < height and 0 <= nx < width and mask[ny, nx] and not seen[ny, nx]:
-                        seen[ny, nx] = True
-                        stack.append((ny, nx))
-        largest = max(largest, count)
-    return largest
+def _stamp():
+    now = datetime.now(timezone.utc)
+    # Sortable timestamp plus a short random suffix so names never collide.
+    return now.strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:6], now
 
 
-def get_thermal_stats(mlx, frame):
-    mlx.getFrame(frame)
-    temps = np.asarray(frame, dtype=np.float32).reshape(24, 32)
-    valid = np.isfinite(temps)
-    if not valid.any():
+def _unlink(path):
+    try:
+        Path(path).unlink()
+    except OSError:
+        pass
+
+
+class Node:
+    def __init__(self, cfg, read_frame, upload, capture_photo=None,
+                 temp_dir=TEMP_DIR, pending_dir=PENDING_DIR, sleep=time.sleep):
+        self.cfg = cfg
+        self.read_frame = read_frame        # () -> 24x32 temperatures in C
+        self.upload = upload                # (meta, heatmap_path, photo_path|None) -> raises on failure
+        self.capture_photo = capture_photo  # (path) -> saves a JPEG, or None without a Pi Camera
+        self.temp_dir = Path(temp_dir)
+        self.pending_dir = Path(pending_dir)
+        self.sleep = sleep
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+        self.event_active = False
+        self.cool_samples = 0
+
+    def _read(self):
+        for attempt in range(SENSOR_READ_ATTEMPTS):
+            try:
+                return _analyze_frame(self.read_frame())
+            except Exception as exc:
+                print(f"Thermal read error (attempt {attempt + 1}):", exc)
+                self.sleep(0.5)
         return None
-    vals = temps[valid]
-    max_temp = float(np.max(vals))
-    ambient = float(np.percentile(vals, 60))
-    threshold = max(HOT_TEMP_C, ambient + AMBIENT_DELTA_C)
-    hot = valid & (temps >= threshold)
-    cluster = largest_component(hot)
-    hot_percent = float(hot.sum() / valid.sum() * 100.0) if cluster >= MIN_CLUSTER_PIXELS else 0.0
-    return max_temp, hot_percent, ambient, cluster
+
+    def sample(self):
+        """Take one scheduled snapshot; queue and upload an event if heat is confirmed."""
+        reading = self._read()
+        if reading is None:
+            return
+        temps, stats = reading
+        name, now = _stamp()
+        snapshot = self.temp_dir / f"sample_{name}.jpg"
+        render_heatmap(temps, stats, self._label(now)).save(snapshot, format="JPEG", quality=85)
+        print(f"Sample: max {stats['max_temp']:.1f} C, background {stats['ambient']:.1f} C, "
+              f"cluster {stats['cluster_pixels']} px, hot={stats['hot']}")
+        try:
+            if not stats["hot"]:
+                self.cool_samples += 1
+                if self.event_active and self.cool_samples >= EVENT_RESET_SAMPLES:
+                    self.event_active = False
+                return
+            self.cool_samples = 0
+            if self.event_active:
+                return  # Same fire is still burning; the reviewer already has an alert.
+            started = time.monotonic()
+            confirmed = self._confirm(temps, stats)
+            if confirmed:
+                self._queue(name, now, *confirmed, duration=time.monotonic() - started)
+                self.event_active = True
+        finally:
+            _unlink(snapshot)
+        self.flush()
+
+    def _confirm(self, temps, stats):
+        """Read a burst of frames; return the hottest (temps, stats) if most are hot."""
+        best, hot_count = (temps, stats), 0
+        for _ in range(CONFIRM_FRAMES):
+            self.sleep(CONFIRM_INTERVAL_SECONDS)
+            reading = self._read()
+            if reading is None or not reading[1]["hot"]:
+                continue
+            hot_count += 1
+            if reading[1]["cluster_pixels"] > best[1]["cluster_pixels"]:
+                best = reading
+        if hot_count * 2 > CONFIRM_FRAMES:
+            return best
+        print(f"Heat not confirmed ({hot_count}/{CONFIRM_FRAMES} burst frames hot); ignoring.")
+        return None
+
+    def _label(self, now):
+        return f"{self.cfg['camera_id']}  {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
+    def _queue(self, name, now, temps, stats, duration):
+        heatmap = self.pending_dir / f"{name}.jpg"
+        render_heatmap(temps, stats, self._label(now)).save(heatmap, format="JPEG", quality=90)
+        if self.capture_photo:
+            photo = self.pending_dir / f"{name}_photo.jpg"
+            try:
+                self.capture_photo(photo)
+            except Exception as exc:
+                print("Pi Camera photo failed; sending heat-map only:", exc)
+                _unlink(photo)
+        meta = {
+            "captured_at": now.isoformat(),
+            "fire_size_percent": round(stats["hot_percent"], 3),
+            "max_temperature_c": round(stats["max_temp"], 3),
+            "duration_seconds": round(max(0.0, duration), 2),
+            "detection_method": "thermal",
+        }
+        # Write the JSON last (atomically): its presence marks the event as complete.
+        tmp = self.pending_dir / f"{name}.json.tmp"
+        tmp.write_text(json.dumps(meta), encoding="utf-8")
+        tmp.replace(self.pending_dir / f"{name}.json")
+        print("Fire event queued:", name)
+        self._prune()
+
+    def _files(self, meta_path):
+        name = meta_path.name[: -len(".json")]
+        return meta_path, self.pending_dir / f"{name}.jpg", self.pending_dir / f"{name}_photo.jpg"
+
+    def _prune(self):
+        queued = sorted(self.pending_dir.glob("*.json"))
+        for meta_path in queued[: max(0, len(queued) - MAX_PENDING_EVENTS)]:
+            print("Pending queue full; dropping oldest event", meta_path.name)
+            for path in self._files(meta_path):
+                _unlink(path)
+
+    def flush(self):
+        """Upload queued events oldest-first. Stops at the first failure. Returns count sent."""
+        sent = 0
+        for meta_path in sorted(self.pending_dir.glob("*.json")):
+            meta_path, heatmap, photo = self._files(meta_path)
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                self.upload(meta, heatmap, photo if photo.exists() else None)
+            except Exception as exc:
+                print("Upload failed; will retry:", exc)
+                break
+            for path in (meta_path, heatmap, photo):
+                _unlink(path)
+            sent += 1
+            print("Event uploaded:", meta_path.name)
+        return sent
 
 
-def visual_flame_score(frame):
-    """Return warm, bright pixel fraction (0..1) for RGB888 or BGR-shaped frames.
+def _analyze_frame(temps):
+    stats = _analyze(temps)
+    if stats is None:
+        raise ValueError("Thermal frame contained no valid pixels.")
+    return temps, stats
 
-    This lightweight heuristic deliberately does not claim to classify fire reliably;
-    red/yellow objects, sunlight and reflections can trigger it.
-    """
-    if frame is None or frame.ndim != 3 or frame.shape[2] < 3:
-        return 0.0
-    data = frame[:, :, :3].astype(np.uint16, copy=False)
-    c0, green, c2 = data[:, :, 0], data[:, :, 1], data[:, :, 2]
-    def warm(red, blue):
-        return (red > 150) & (green > 65) & (red > green * 1.05) & (green > blue * 1.12) & ((red - blue) > 45)
-    # Picamera2 RGB888 buffer order can vary with the selected stream/driver.
-    mask = warm(c0, c2) | warm(c2, c0)
-    return float(np.count_nonzero(mask) / mask.size)
+
+def upload_event(cfg, meta, heatmap_path, photo_path):
+    form = {
+        "camera_id": cfg["camera_id"], "camera_key": cfg["camera_key"],
+        "latitude": cfg["latitude"], "longitude": cfg["longitude"],
+        "fire_size_percent": meta["fire_size_percent"],
+        "max_temperature_c": meta["max_temperature_c"],
+        "duration_seconds": meta["duration_seconds"],
+        "detection_method": meta["detection_method"],
+    }
+    with open(heatmap_path, "rb") as image:
+        files = {"image": (Path(heatmap_path).name, image, "image/jpeg")}
+        if photo_path:
+            with open(photo_path, "rb") as photo:
+                files["photo"] = (Path(photo_path).name, photo, "image/jpeg")
+                response = requests.post(SERVER_URL + "/api/camera-event", data=form, files=files, timeout=60)
+        else:
+            response = requests.post(SERVER_URL + "/api/camera-event", data=form, files=files, timeout=60)
+    response.raise_for_status()
+    return response.json()
 
 
 def heartbeat(cfg):
@@ -127,175 +237,60 @@ def heartbeat(cfg):
         return False
 
 
-def capture_event_media(camera, image_path, video_path):
-    """Save a snapshot and short MP4 clip. Video failure leaves the snapshot usable."""
-    frame = camera.capture_array("lores")
-    Image.fromarray(frame).save(image_path, format="JPEG", quality=90, optimize=True)
-    video_error = None
+def create_thermal_reader():
+    import adafruit_mlx90640
+    import board
+    import busio
+    import numpy as np
+
+    i2c = busio.I2C(board.SCL, board.SDA, frequency=800000)
+    mlx = adafruit_mlx90640.MLX90640(i2c)
+    mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_2_HZ
+    buffer = [0.0] * 768
+
+    def read_frame():
+        mlx.getFrame(buffer)
+        return np.asarray(buffer, dtype=np.float32).reshape(24, 32)
+
+    return read_frame
+
+
+def create_photo_capture():
+    """Return a photo-capture function if a Pi Camera is attached, else None."""
     try:
-        encoder = H264Encoder(bitrate=2_000_000)
-        encoder.output = FfmpegOutput(str(video_path))
-        # The camera is already running for frame sampling, so attach/detach
-        # only the encoder instead of attempting to start the camera twice.
-        camera.start_encoder(encoder, name="firewatch-event")
-        time.sleep(max(2, min(CLIP_SECONDS, 15)))
-        camera.stop_encoder(name="firewatch-event")
-        if not video_path.exists() or video_path.stat().st_size == 0:
-            raise RuntimeError("Camera returned an empty video clip.")
+        from picamera2 import Picamera2
+
+        camera = Picamera2()
+        camera.configure(camera.create_still_configuration(main={"size": (1280, 720)}))
+        camera.start()
+        time.sleep(2)
     except Exception as exc:
-        video_error = str(exc)
-        # Do not leave a recording active if the encoder/output failed mid-session.
-        try:
-            camera.stop_encoder(name="firewatch-event")
-        except Exception:
-            pass
-        try:
-            if video_path.exists() and video_path.stat().st_size == 0:
-                video_path.unlink()
-        except OSError:
-            pass
-    return video_error
-
-
-def send_event(cfg, image_path, video_path, max_temp, hot_percent, duration, visual_score, method):
-    form = {
-        "camera_id": cfg["camera_id"], "camera_key": cfg["camera_key"],
-        "latitude": cfg["latitude"], "longitude": cfg["longitude"],
-        "fire_size_percent": round(float(hot_percent), 3),
-        "max_temperature_c": round(float(max_temp), 3),
-        "duration_seconds": round(max(0.0, float(duration)), 2),
-        "visual_fire_score": round(float(visual_score), 5),
-        "detection_method": method,
-    }
-    files = {}
-    with open(image_path, "rb") as image_file:
-        files["image"] = (Path(image_path).name, image_file, "image/jpeg")
-        if video_path and Path(video_path).exists() and Path(video_path).stat().st_size:
-            with open(video_path, "rb") as video_file:
-                files["video"] = (Path(video_path).name, video_file, "video/mp4")
-                response = requests.post(SERVER_URL + "/api/camera-event", data=form, files=files, timeout=90)
-                response.raise_for_status()
-                return response.json()
-        response = requests.post(SERVER_URL + "/api/camera-event", data=form, files=files, timeout=30)
-        response.raise_for_status()
-        return response.json()
+        print(f"No Pi Camera available ({exc}); running thermal-only.")
+        return None
+    print("Pi Camera found; alerts will include a photo.")
+    return lambda path: camera.capture_file(str(path))
 
 
 def main():
     cfg = load_config()
-    mlx = create_thermal()
-    camera = Picamera2()
-    camera.configure(camera.create_video_configuration(
-        # H264 encoding uses the camera's YUV420 main stream. The lower-rate
-        # RGB888 lores stream is used for lightweight visual sampling/snapshots.
-        main={"size": (1280, 720), "format": "YUV420"},
-        lores={"size": (640, 360), "format": "RGB888"},
-        controls={"FrameRate": 15},
-    ))
-    camera.start()
-    time.sleep(2)
-
-    thermal_buffer = [0.0] * 768
-    thermal_streak = 0
-    visual_streak = 0
-    event_active = False
-    candidate_started = None
-    last_hb = 0.0
-    last_visual_sample = 0.0
-    latest_visual_score = 0.0
-    latest_thermal = (0.0, 0.0, 0.0, 0)
-    reset_streak = 0
-
+    node = Node(cfg, create_thermal_reader(), functools.partial(upload_event, cfg),
+                capture_photo=create_photo_capture())
     print(f"Firewatch camera {cfg['camera_id']} @ fixed location {cfg['latitude']}, {cfg['longitude']}")
-    print(f"Server: {SERVER_URL}; visual sampling every {VISUAL_SAMPLE_SECONDS}s")
+    print(f"Server: {SERVER_URL}; sampling every {SAMPLE_SECONDS:.0f}s; pending queue: {node.pending_dir}")
+    last_heartbeat = last_sample = float("-inf")
     try:
         while True:
             now = time.monotonic()
-            if now - last_hb >= HEARTBEAT_SECONDS:
+            if now - last_heartbeat >= HEARTBEAT_SECONDS:
                 heartbeat(cfg)
-                last_hb = now
-
-            try:
-                thermal = get_thermal_stats(mlx, thermal_buffer)
-            except Exception as exc:
-                print("Thermal read error:", exc)
-                time.sleep(0.5)
-                continue
-            if thermal is None:
-                time.sleep(0.05)
-                continue
-            latest_thermal = thermal
-            max_temp, hot_percent, _ambient, cluster = thermal
-            thermal_detected = max_temp >= HOT_TEMP_C and hot_percent >= MIN_HOT_PERCENT and cluster >= MIN_CLUSTER_PIXELS
-            thermal_streak = thermal_streak + 1 if thermal_detected else 0
-
-            if now - last_visual_sample >= VISUAL_SAMPLE_SECONDS:
-                try:
-                    latest_visual_score = visual_flame_score(camera.capture_array("lores"))
-                except Exception as exc:
-                    print("Video frame sampling error:", exc)
-                    latest_visual_score = 0.0
-                visual_streak = visual_streak + 1 if latest_visual_score >= VISUAL_FIRE_THRESHOLD else 0
-                last_visual_sample = now
-
-            candidate = thermal_detected or latest_visual_score >= VISUAL_FIRE_THRESHOLD
-            if candidate and candidate_started is None:
-                candidate_started = now
-            if not candidate:
-                candidate_started = None
-
-            thermal_persistent = thermal_streak >= REQUIRED_FRAMES
-            visual_persistent = visual_streak >= VISUAL_REQUIRED_FRAMES
-            if (thermal_persistent or visual_persistent) and not event_active:
-                duration = now - (candidate_started if candidate_started is not None else now)
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                image_path = BASE_DIR / f"event_{cfg['camera_id']}_{stamp}.jpg"
-                video_path = BASE_DIR / f"event_{cfg['camera_id']}_{stamp}.mp4"
-                try:
-                    video_error = capture_event_media(camera, image_path, video_path)
-                    if video_error:
-                        print("Video clip unavailable; submitting snapshot only:", video_error)
-                    if thermal_persistent and visual_persistent:
-                        method = "thermal+video-heuristic"
-                    elif thermal_persistent:
-                        method = "thermal"
-                    else:
-                        method = "video-heuristic"
-                    result = send_event(
-                        cfg, image_path, video_path if not video_error else None,
-                        latest_thermal[0], latest_thermal[1], duration, latest_visual_score, method,
-                    )
-                    print("Event submitted:", result)
-                except Exception as exc:
-                    print("Could not submit fire event:", exc)
-                finally:
-                    for path in (image_path, video_path):
-                        try:
-                            path.unlink()
-                        except OSError:
-                            pass
-                event_active = True
-                reset_streak = 0
-
-            if event_active:
-                if not thermal_detected and latest_visual_score < VISUAL_FIRE_THRESHOLD:
-                    reset_streak += 1
-                else:
-                    reset_streak = 0
-                if reset_streak >= 30:
-                    event_active = False
-                    reset_streak = 0
-                    thermal_streak = visual_streak = 0
-                    candidate_started = None
-            time.sleep(0.05)
+                node.flush()  # retry anything left over from an outage
+                last_heartbeat = now
+            if now - last_sample >= SAMPLE_SECONDS:
+                node.sample()
+                last_sample = now
+            time.sleep(1)
     except KeyboardInterrupt:
         print("Stopping Firewatch node.")
-    finally:
-        try:
-            camera.stop_encoder(name="firewatch-event")
-        except Exception:
-            pass
-        camera.stop()
 
 
 if __name__ == "__main__":

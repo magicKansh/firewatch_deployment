@@ -457,11 +457,6 @@ def firewatch(request: Request):
             camera.get("display_status") == "online"
             for camera in cameras
         ),
-        "unconfirmed": (
-            int((device & (status == "unconfirmed")).sum())
-            if not data.empty
-            else 0
-        ),
         "confirmed": (
             int((device & (status == "confirmed")).sum())
             if not data.empty

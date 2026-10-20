@@ -21,14 +21,12 @@ TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER")
 
 
 def _confirmation_text(event):
-    eid = event["event_id"]
-    yes = f"{PUBLIC_BASE_URL}/confirm/{eid}/yes?token={event['confirm_token']}"
-    no = f"{PUBLIC_BASE_URL}/confirm/{eid}/no?token={event['confirm_token']}"
-    return (f"FIREWATCH ALERT: Possible fire at {event['camera_id']}. "
+    review = f"{PUBLIC_BASE_URL}/review/{event['event_id']}?token={event['confirm_token']}"
+    place = event.get("place") or event["camera_id"]
+    return (f"FIREWATCH ALERT: Possible fire seen by {place} ({event['camera_id']}). "
             f"Hot area {event['fire_size_percent']:.1f}%, max {event['max_temperature_c']:.1f} C, "
-            f"severity {event['severity_index']:.1f} ({event['magnitude']}). "
-            f"Video score {float(event.get('visual_fire_score', 0) or 0):.3f} via {event.get('detection_method', 'thermal')}.\n"
-            f"CONFIRM: {yes}\nFALSE ALARM: {no}"), yes, no
+            f"severity {event['severity_index']:.1f} ({event['magnitude']}).\n"
+            f"Look at the heat image and mark it Fire or Not a fire: {review}"), review
 
 
 def _record(event_id, subscriber_id, channel, destination, status, provider_id=None, error=None):
@@ -40,7 +38,7 @@ def _record(event_id, subscriber_id, channel, destination, status, provider_id=N
 
 def send_fire_confirmation(event):
     subscribers = get_subscribers(event["camera_id"])
-    body, _, _ = _confirmation_text(event)
+    body, _ = _confirmation_text(event)
     sms_sent = email_sent = 0
     errors = []
     if not subscribers:

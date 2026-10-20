@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Review detection · Firewatch</title>
+<style>
+:root{--bg:#161716;--card:#202220;--border:rgba(255,255,255,.14);--text:#f8fafc;--muted:#c5c8c7;--fire:#dc2626;--fire-hover:#b91c1c;--accent:#f0440a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-size:15px;line-height:1.5}
+main{max-width:720px;margin:0 auto;padding:20px 16px 40px}
+.brand{color:var(--accent);font-weight:700;letter-spacing:.3px;font-size:13px;text-transform:uppercase}
+h1{margin:4px 0 2px;font-size:22px}
+.sub{margin:0 0 16px;color:var(--muted)}
+figure{margin:0 0 14px;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+figure img{display:block;width:100%;height:auto}
+figcaption{padding:8px 12px;color:var(--muted);font-size:13px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0 0 18px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:12px}
+dt{color:var(--muted)}dd{margin:0;font-weight:600}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{font:inherit;font-weight:700;padding:14px;border-radius:10px;border:1px solid var(--border);cursor:pointer;color:var(--text);background:#2c2f2c}
+button.fire{background:var(--fire);border-color:var(--fire)}
+button.fire:hover{background:var(--fire-hover)}
+button:hover{filter:brightness(1.1)}
+.note{color:var(--muted);font-size:13px;margin-top:12px}
+.outcome{padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--card);margin-bottom:16px;font-weight:600}
+.outcome.confirmed{border-color:var(--fire)}
+a{color:#fdba74}
+</style>
+</head>
+<body>
+<main>
+ <div class="brand">Firewatch</div>
+ <h1>Possible fire: {{ event.place or event.camera_id }}</h1>
+ <p class="sub">Camera {{ event.camera_id }} · first seen {{ (event.first_seen_at or event.timestamp)[:16].replace("T", " ") }} UTC</p>
+
+ {% if state == "done" %}
+  {% if event.status == "confirmed" %}
+   <div class="outcome confirmed">Marked as a fire. It is now on the community map and used for route avoidance.</div>
+  {% elif event.status == "false_alarm" %}
+   <div class="outcome">Marked as not a fire. It will not appear on the community map.</div>
+  {% else %}
+   <div class="outcome">This detection has already been reviewed.</div>
+  {% endif %}
+ {% elif state == "expired" %}
+  <div class="outcome">This review link has expired. The detection stays off the community map.</div>
+ {% endif %}
+
+ {% if event.image %}
+ <figure>
+  <img src="/{{ event.image }}" alt="Thermal heat-map from camera {{ event.camera_id }}">
+  <figcaption>Thermal heat-map. The cyan box marks the hottest area.</figcaption>
+ </figure>
+ {% endif %}
+ {% if event.photo %}
+ <figure>
+  <img src="/{{ event.photo }}" alt="Camera photo from {{ event.camera_id }}">
+  <figcaption>Camera photo taken at the same moment.</figcaption>
+ </figure>
+ {% endif %}
+
+ <dl>
+  <dt>Max temperature</dt><dd>{{ "%.1f"|format(event.max_temperature_c) }} °C</dd>
+  <dt>Hot area</dt><dd>{{ "%.1f"|format(event.fire_size_percent) }}% of view</dd>
+  <dt>Severity</dt><dd>{{ event.magnitude }} ({{ "%.0f"|format(event.severity_index) }}/100)</dd>
+ </dl>
+
+ {% if state == "open" %}
+ <form method="post" action="/review/{{ event.event_id }}">
+  <input type="hidden" name="token" value="{{ event.token }}">
+  <div class="actions">
+   <button class="fire" type="submit" name="answer" value="fire">Fire</button>
+   <button type="submit" name="answer" value="not_fire">Not a fire</button>
+  </div>
+ </form>
+ <p class="note">Choosing <strong>Fire</strong> publishes this detection to the community map. Your answer is final for this link.</p>
+ {% endif %}
+
+ <p class="note"><a href="/">Open the Firewatch map</a></p>
+</main>
+</body>
+</html>

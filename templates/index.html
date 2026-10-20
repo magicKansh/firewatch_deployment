@@ -46,7 +46,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
 .panel-heading h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.2px;color:#fff}
 .panel-heading p{margin:5px 0 0;color:#d1d5db;font-size:11px;line-height:1.5}
 .refresh-time{color:#d1d5db;font-size:10px;white-space:nowrap}
-.metrics-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;padding:12px;border-bottom:1px solid rgba(255,255,255,.13)}
+.metrics-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:12px;border-bottom:1px solid rgba(255,255,255,.13)}
 .metric-card{min-width:0;padding:9px 8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:9px}
 .metric-top{display:flex;align-items:center;justify-content:space-between;color:#d1d5db}
 .metric-icon{display:grid;place-items:center;height:23px;width:23px;border-radius:6px;background:rgba(255,255,255,.1);color:#f3f4f6}
@@ -223,16 +223,6 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
   <div class="metric-card">
    <div class="metric-top">
     <span class="metric-icon">
-     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
-    </span>
-   </div>
-   <strong class="metric-number" id="metric-unconfirmed">{{ stats.unconfirmed | default(0) }}</strong>
-   <span class="metric-label">Needs review</span>
-  </div>
-
-  <div class="metric-card">
-   <div class="metric-top">
-    <span class="metric-icon">
      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m8.5 12 2.3 2.3 4.8-5"></path></svg>
     </span>
    </div>
@@ -278,9 +268,9 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
  </div>
 
  <div class="sidebar-footer">
-  Camera detections begin as unconfirmed events. Confirmed camera fires and
-  available public fire detections may affect route planning. Always verify
-  a hazard before making safety-critical decisions.
+  Camera detections appear here only after a person reviews the heat image and
+  confirms a fire. Confirmed camera fires and available public fire detections
+  may affect route planning. Always verify a hazard before making safety-critical decisions.
  </div>
 </aside>
 
@@ -391,7 +381,6 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
 <div class="map-legend">
  <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>Camera online</span>
  <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>Camera stale</span>
- <span class="legend-item"><span class="legend-dot" style="background:#ca8a04"></span>Needs review</span>
  <span class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>Confirmed fire</span>
  <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>Satellite detection</span>
 </div>
@@ -645,10 +634,6 @@ async function refreshPanels() {
             cameras.filter(camera => camera.status === "online").length +
             " online";
 
-        byId("metric-unconfirmed").textContent = events.filter(
-            event => event.status === "unconfirmed"
-        ).length;
-
         byId("metric-confirmed").textContent = events.filter(
             event => event.status === "confirmed"
         ).length;
@@ -699,7 +684,11 @@ async function refreshPanels() {
                 const color = STATUS_COLORS[state] || STATUS_COLORS.unknown;
 
                 const imageLink = event.image
-                    ? `<a class="evidence-link" href="/${escapeHtml(event.image)}" target="_blank" rel="noopener">View snapshot</a>`
+                    ? `<a class="evidence-link" href="/${escapeHtml(event.image)}" target="_blank" rel="noopener">View heat image</a>`
+                    : "";
+
+                const photoLink = event.photo
+                    ? `<a class="evidence-link" href="/${escapeHtml(event.photo)}" target="_blank" rel="noopener">View camera photo</a>`
                     : "";
 
                 const videoLink = event.video
@@ -728,6 +717,7 @@ async function refreshPanels() {
                             ${escapeHtml(event.timestamp || "")}
                         </div>
                         ${imageLink}
+                        ${photoLink}
                         ${videoLink}
                     </div>
                 `;

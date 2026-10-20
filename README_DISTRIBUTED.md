@@ -1,13 +1,13 @@
 # Firewatch Distributed Camera System
 
-Firewatch is a prototype distributed wildfire-monitoring and route-avoidance system. Each Raspberry Pi uses an MLX90640 thermal sensor plus a Pi Camera video stream. Persistent thermal or warm/flickering video clues create an unconfirmed event; the Pi uploads a snapshot and a short MP4 clip when recording succeeds. The video rule is a lightweight heuristic, not a trained fire-classification model, so human confirmation remains important.
+Firewatch is a prototype distributed wildfire-monitoring and route-avoidance system. Each Raspberry Pi uses an MLX90640 thermal sensor, plus an optional Pi Camera. About once a minute the Pi takes a thermal snapshot; when a hot spot is confirmed by a short burst of extra frames, it uploads a heat-map image (and a camera photo, if a camera is attached) as an unconfirmed event. A person reviews the image, and only confirmed fires reach the public map.
 
 ## Architecture
 
 ```text
 Pi #1 / Pi #2 / Pi #N
- MLX90640 + Pi Camera video
-        | snapshot + MP4 over HTTPS
+ MLX90640 (+ optional Pi Camera)
+        | heat-map + photo over HTTPS
         v
  Firewatch Server
   SQLite + APIs
@@ -17,7 +17,7 @@ Pi #1 / Pi #2 / Pi #N
    +--------------> Event history / camera health
                     |
                     v
-               YES / NO confirmation
+               Review page: Fire / Not a fire
 ```
 
 ## What is implemented
@@ -30,9 +30,10 @@ The dashboard is styled as a clean enterprise monitoring console with a Carto li
 - Fixed server-side latitude/longitude is authoritative; no GPS is required on the Pi.
 - Camera heartbeat and online/stale/offline status.
 - Thermal detection uses an adaptive ambient threshold plus connected-component filtering, persistence, and configurable thresholds.
-- A video-frame heuristic checks for persistent bright warm-colored regions and a short video clip is attached to an event when recording is available. It can have false positives and is not a certified classifier.
+- Each event carries a 640x480 heat-map with the hot cluster boxed, plus a Pi Camera photo when one is attached.
+- The Pi keeps events in a local `pending/` queue until the server accepts them, so outages and reboots do not lose detections.
 - The browser map initializes correctly even with zero events, shows registered fixed-location cameras, and refreshes event/map data automatically every 30 seconds.
-- Event snapshots and MP4 clips are linked in the recent-events panel.
+- Heat-maps and photos of confirmed events are linked in the recent-events panel.
 - Event deduplication prevents repeated alerts from becoming dozens of separate events.
 - Event observations preserve repeated measurements.
 - Confirmation tokens are hashed, expire, and are single-use.
@@ -40,7 +41,7 @@ The dashboard is styled as a clean enterprise monitoring console with a Carto li
 - Notification attempts are recorded in SQLite.
 - Admin camera API protected by `FIREWATCH_ADMIN_TOKEN`.
 - Camera status and recent-event panel on the map.
-- Only **confirmed** device detections are automatically added to route-avoidance geometry.
+- Only **confirmed** device detections appear on the public map, in `/api/device-events`, and in route-avoidance geometry.
 - Existing reported/satellite fire layers remain available.
 
 ## Server setup
@@ -94,11 +95,11 @@ Email can be added with `--email`.
 
 ## Raspberry Pi setup
 
-On Raspberry Pi OS, install system camera/video packages first so Picamera2 uses the OS-provided libcamera stack:
+On Raspberry Pi OS, install the system packages first (`python3-picamera2` is only needed if a Pi Camera is attached; without one the node runs thermal-only):
 
 ```bash
 sudo apt update
-sudo apt install -y python3-picamera2 python3-numpy python3-pil python3-venv ffmpeg
+sudo apt install -y python3-numpy python3-pil python3-venv python3-picamera2
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -r requirements-pi.txt
@@ -114,28 +115,35 @@ export FIREWATCH_SERVER_URL="https://your-service.onrender.com"
 python sensor_monitor.py
 ```
 
-The Pi samples video frames and the thermal sensor. On a persistent candidate, it records an approximately 6-second MP4 clip and snapshot, then uploads both to `/api/camera-event`. Tune `VISUAL_FIRE_THRESHOLD`, `VISUAL_REQUIRED_FRAMES`, and `FIREWATCH_CLIP_SECONDS` for the installation. Install/configure a real trained fire-detection model and validate it on representative data before relying on video-only decisions in the field.
+Enable I2C (`sudo raspi-config` -> Interface Options -> I2C) before the first run.
 
-The Pi sends a heartbeat about every 30 seconds. The thermal detector uses:
+How the node works:
 
-- absolute temperature threshold (`HOT_TEMP_C`)
-- temperature above local background (`AMBIENT_DELTA_C`)
-- minimum hot area (`MIN_HOT_PERCENT`)
-- minimum connected hot cluster (`MIN_CLUSTER_PIXELS`)
-- persistent detections (`REQUIRED_FRAMES`)
+1. Every `SAMPLE_SECONDS` (default 60) it reads one thermal frame and saves a heat-map snapshot to `FIREWATCH_TEMP_DIR` (default `/tmp/firewatch`). Cool snapshots are deleted straight away.
+2. If the frame looks hot, it reads `CONFIRM_FRAMES` more frames (default 5) `CONFIRM_INTERVAL_SECONDS` apart. If most are hot, the hottest one becomes the event's heat-map, and a photo is taken if a camera is attached.
+3. The event is written to `FIREWATCH_PENDING_DIR` (default `pending/` next to the script) and uploaded. Files are deleted only after the server accepts them; failed uploads retry every heartbeat. At most `MAX_PENDING_EVENTS` (default 20) are kept.
+4. While the same fire keeps burning it does not alert again, until `EVENT_RESET_SAMPLES` (default 3) cool samples in a row.
 
-These values are intentionally configurable because installation, weather, distance, optics, and sensor calibration affect the readings.
+Every sample is logged (`max`, `background`, `cluster`), so watch the output for a few days on site to calibrate. The thermal detector uses:
+
+- absolute temperature threshold (`HOT_TEMP_C`, default 80)
+- temperature above the scene background (`AMBIENT_DELTA_C`, default 25)
+- minimum connected hot cluster (`MIN_CLUSTER_PIXELS`, default 6)
+- optional minimum hot area as % of the frame (`MIN_HOT_PERCENT`, default 0 = off)
+
+The MLX90640 has 32x24 pixels over 55 degrees, so each pixel covers roughly 1.7 degrees (about 3 m wide at 100 m) and reports that patch's average temperature. A small or distant fire reads far cooler than its flames and covers few pixels; lower `HOT_TEMP_C`/`MIN_CLUSTER_PIXELS` for longer viewing distances and test with a known heat source.
 
 ## Confirmation flow
 
-1. Pi detects persistent thermal heat or a persistent video-frame heuristic signal.
-2. Pi captures a snapshot and attempts a short MP4 clip.
+1. Pi confirms a hot spot over a short burst of frames.
+2. Pi uploads the heat-map (and photo, if any) to `/api/camera-event`.
 3. Server authenticates the camera and uses its registered coordinates.
-4. Server creates an `unconfirmed` event.
-5. SMS/email is sent with confirmation links.
-6. Recipient selects **CONFIRM** or **FALSE ALARM**.
-7. The token is consumed and the event becomes `confirmed` or `false_alarm`.
-8. Confirmed device events are used for route avoidance.
+4. Server creates an `unconfirmed` event. It is not shown publicly.
+5. SMS/email is sent with a link to `/review/{event_id}?token=...`.
+6. The reviewer opens the page, looks at the heat-map and photo, and presses **Fire** or **Not a fire**. Opening the link changes nothing (link previews and email scanners cannot answer for you); only pressing a button does.
+7. The token is consumed and the event becomes `confirmed` (public map + route avoidance) or `false_alarm` (stays private).
+
+Links from older alerts (`/confirm/...`) now open the review page instead of acting directly.
 
 Repeated reports from the same camera within `EVENT_DEDUPE_SECONDS` update the existing event and do not send another initial alert.
 
@@ -160,7 +168,7 @@ Endpoints:
 
 ## Important production notes
 
-Use HTTPS, firewall the server, keep secrets out of Git, back up SQLite and uploaded clips, and consider a real background queue for notifications if this becomes a larger deployment. Render stores these under the persistent disk mount configured in `render.yaml`. The route avoid-zone is a prototype buffer around reported/confirmed points, not a surveyed evacuation boundary. For stronger device authentication, a future version can move from shared camera keys to signed HMAC request bodies with timestamp/replay protection.
+Use HTTPS, firewall the server, keep secrets out of Git, back up SQLite and uploaded images, and consider a real background queue for notifications if this becomes a larger deployment. Render stores these under the persistent disk mount configured in `render.yaml`. The route avoid-zone is a prototype buffer around reported/confirmed points, not a surveyed evacuation boundary. For stronger device authentication, a future version can move from shared camera keys to signed HMAC request bodies with timestamp/replay protection.
 
 This is a prototype detection/decision-support system, **not a certified life-safety wildfire warning system**. MLX90640 readings can be affected by distance, emissivity, sunlight, reflections, hot vehicles/equipment, and other heat sources. Confirmation and independent verification should be used before treating an event as a real wildfire.
 
@@ -173,4 +181,13 @@ See `README_RENDER.md` for the Render setup. The important distinction is that R
 
 ## Dashboard navigation and satellite monitoring
 
-The top-right panel supports driving, biking, and walking routes with turn-by-turn instructions. Route avoidance uses available reported/satellite detections and confirmed camera fires; unconfirmed camera events stay visible for review and are not automatically treated as confirmed device hazards. The panel also exposes the NASA FIRMS active-fire layer. Set `FIRMS_API_KEY` to enable active-fire satellite detections, and optionally `FIRMS_BBOX=west,south,east,north` to monitor a fixed bounding box instead of the camera footprint.
+The top-right panel supports driving, biking, and walking routes with turn-by-turn instructions. Route avoidance uses available reported/satellite detections and confirmed camera fires; unconfirmed camera events are only visible on their review page until someone confirms them. The panel also exposes the NASA FIRMS active-fire layer. Set `FIRMS_API_KEY` to enable active-fire satellite detections, and optionally `FIRMS_BBOX=west,south,east,north` to monitor a fixed bounding box instead of the camera footprint.
+
+## Tests
+
+The detection, Pi queue and review-flow logic is covered by tests that run on any machine (no Pi hardware needed):
+
+```bash
+pip install -r requirements.txt pytest httpx
+python -m pytest
+```

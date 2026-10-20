@@ -97,7 +97,7 @@ export FIREWATCH_SERVER_URL="https://your-service.onrender.com"
 python3 sensor_monitor.py
 ```
 
-The Pi connects to the deployed Firewatch server through `FIREWATCH_SERVER_URL`. On persistent thermal/video evidence, the node uploads an image and attempts a short MP4 clip. The visual check is only a simple bright/warm-color heuristic, not a trained fire model; human confirmation remains required.
+The Pi connects to the deployed Firewatch server through `FIREWATCH_SERVER_URL`. When a hot spot is confirmed, the node uploads a thermal heat-map (plus a photo if a Pi Camera is attached). The event stays private until a reviewer marks it as a fire from the link in their SMS/email.
 
 ## Why the original Render build failed
 

@@ -22,7 +22,7 @@ def invalidate_cache():
 
 
 def _empty():
-    return pd.DataFrame(columns=["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index"])
+    return pd.DataFrame(columns=["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","photo","video","visual_fire_score","detection_method","severity_index"])
 
 
 def _load_reported_fires():
@@ -43,7 +43,11 @@ def _load_reported_fires():
 def _load_device_fires():
     init_db()
     with get_connection() as conn:
-        rows = conn.execute("SELECT * FROM device_events ORDER BY timestamp DESC").fetchall()
+        # Only human-confirmed detections reach the public map; unreviewed and
+        # false-alarm events stay private to the review page.
+        rows = conn.execute(
+            "SELECT * FROM device_events WHERE status='confirmed' ORDER BY timestamp DESC"
+        ).fetchall()
     if not rows:
         return _empty()
     data = pd.DataFrame([dict(r) for r in rows])
@@ -52,7 +56,7 @@ def _load_device_fires():
     data["mag"] = data["severity_index"].clip(lower=0.5, upper=5)
     data["place"] = data["place"].fillna("Raspberry Pi camera")
     data["source"] = "device"
-    return data[["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index"]]
+    return data[["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","photo","video","visual_fire_score","detection_method","severity_index"]]
 
 
 def _load_satellite_fires(reported_df):
