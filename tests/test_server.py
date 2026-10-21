@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -24,6 +25,8 @@ except ImportError:  # pragma: no cover
 
 ADMIN = {"Authorization": "Bearer test-admin-token"}
 JPEG = b"\xff\xd8\xff\xe0" + b"0" * 200
+# Detection time from the Pi (e.g. delayed by its offline queue); must be recent to be accepted.
+DETECTED_AT = (datetime.now(timezone.utc) - timedelta(minutes=3)).replace(microsecond=0).isoformat()
 
 
 @unittest.skipIf(TestClient is None, "server requirements not installed")
@@ -68,7 +71,7 @@ class ServerFlowTests(unittest.TestCase):
         files += [("context_images", (f"event_before_{i}.jpg", io.BytesIO(JPEG), "image/jpeg")) for i in range(context)]
         data = {"camera_id": "CAM-1", "camera_key": self.key, "latitude": 41.1, "longitude": -73.2,
                 "fire_size_percent": 3.2, "max_temperature_c": temp, "duration_seconds": 4,
-                "hotspot_x": hotspot[0], "hotspot_y": hotspot[1], "detected_at": "2026-01-01T00:00:00+00:00"}
+                "hotspot_x": hotspot[0], "hotspot_y": hotspot[1], "detected_at": DETECTED_AT}
         r = self.client.post("/api/camera-event", data=data, files=files)
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
@@ -99,7 +102,7 @@ class ServerFlowTests(unittest.TestCase):
         admin = self.client.get("/api/device-events", headers=ADMIN).json()["events"]
         self.assertEqual(len(admin), 1)
         self.assertEqual(len(admin[0]["context_images"]), 2)
-        self.assertEqual(admin[0]["first_seen_at"], "2026-01-01T00:00:00+00:00")
+        self.assertEqual(admin[0]["first_seen_at"], DETECTED_AT)
         names = [t.get("name") for t in self.client.get("/api/map-figure").json()["data"]]
         self.assertNotIn("Needs review", names)
 

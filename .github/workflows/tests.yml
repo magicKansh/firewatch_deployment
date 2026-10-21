@@ -9,4 +9,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt pytest httpx pillow numpy
-      - run: pytest -q
+      - name: pytest
+        shell: bash
+        run: |
+          set +e
+          pytest -q -rfE --tb=short 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          # Surface each failure as an annotation (visible on the run and on pull requests).
+          grep -E '^(FAILED|ERROR) ' pytest.log | sed 's/^/::error::/'
+          exit $status
