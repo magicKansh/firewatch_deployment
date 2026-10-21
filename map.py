@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import app
 from database import get_connection
+from device_api import PUBLIC_STATUSES
 from fire_data import get_last_updated, get_satellite_status, load_fires
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -243,8 +244,11 @@ def build_map_figure():
                 )
             )
 
-        # Raspberry Pi fire events, grouped by human-review status.
+        # Raspberry Pi fire events. Only ones a reviewer confirmed are public;
+        # unreviewed detections and false alarms stay off the community map.
         device = data[sources == "device"]
+        if not device.empty and "status" in device.columns:
+            device = device[device["status"].isin(PUBLIC_STATUSES)]
 
         if not device.empty:
             device_status = device.get(

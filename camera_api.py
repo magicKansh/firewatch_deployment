@@ -15,6 +15,12 @@ def _auth(authorization):
         raise HTTPException(status_code=401, detail="Invalid admin credentials.")
 
 
+def is_admin(authorization):
+    """True when a valid admin bearer token is supplied (never raises)."""
+    return bool(ADMIN_TOKEN and authorization and authorization.startswith("Bearer ")
+                and secrets.compare_digest(authorization[7:], ADMIN_TOKEN))
+
+
 class CameraCreate(BaseModel):
     camera_id: str = Field(min_length=1, max_length=64)
     latitude: float = Field(ge=-90, le=90)

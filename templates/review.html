@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#171717">
+<title>Firewatch | Review detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#141514;--card:#1e1f1e;--line:rgba(255,255,255,.13);--text:#f8fafc;--muted:#c5c8c7;--accent:#f0440a;--accent-hover:#d93a08;--ok:#86efac;--ok-bg:rgba(22,163,74,.16);--warn:#fde68a;--warn-bg:rgba(217,119,6,.18);--bad:#fecaca;--bad-bg:rgba(220,38,38,.2)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);background:rgba(22,23,22,.95)}
+.mark{display:grid;place-items:center;width:32px;height:32px;border-radius:8px;background:var(--accent);font-weight:700;font-size:12px}
+header strong{font-size:16px;letter-spacing:-.3px}
+header a{margin-left:auto;color:var(--muted);font-size:13px;text-decoration:none}
+main{max-width:720px;margin:0 auto;padding:18px 16px 48px}
+h1{margin:4px 0 4px;font-size:22px;letter-spacing:-.5px;line-height:1.25}
+.sub{margin:0 0 16px;color:var(--muted);font-size:14px}
+.banner{padding:12px 14px;border-radius:10px;margin:0 0 16px;font-size:14px}
+.banner.ok{background:var(--ok-bg);color:var(--ok)}
+.banner.warn{background:var(--warn-bg);color:var(--warn)}
+.banner.bad{background:var(--bad-bg);color:var(--bad)}
+.banner a{color:inherit;font-weight:600}
+figure{margin:0 0 14px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+figure img,figure video{display:block;width:100%;height:auto;background:#000}
+figcaption{padding:8px 12px;color:var(--muted);font-size:12px}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:0 0 16px}
+.thumbs figure{margin:0}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0 0 18px}
+.fact{padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+.fact span{display:block;color:var(--muted);font-size:11px}
+.fact b{font-size:16px;font-weight:600}
+.where{margin:0 0 20px;font-size:14px;color:var(--muted)}
+.where a{color:#fb7045}
+.decision{padding:16px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.decision h2{margin:0 0 4px;font-size:17px}
+.decision p{margin:0 0 14px;color:var(--muted);font-size:13px}
+button,summary.btn{display:block;width:100%;padding:14px;border-radius:10px;border:1px solid transparent;font:600 16px Inter,sans-serif;text-align:center;cursor:pointer;color:#fff}
+.fire{background:var(--accent)}
+.fire:hover{background:var(--accent-hover)}
+.fire.suggested{outline:3px solid #fb7045;outline-offset:2px}
+details{margin-top:10px}
+summary.btn{list-style:none;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.2)}
+summary.btn::-webkit-details-marker{display:none}
+details[open] summary.btn{border-bottom-left-radius:0;border-bottom-right-radius:0}
+.other-body{padding:14px;border:1px solid rgba(255,255,255,.2);border-top:0;border-radius:0 0 10px 10px}
+label{display:block;margin:0 0 6px;font-size:13px;font-weight:600}
+select,textarea{width:100%;margin:0 0 12px;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.3);color:#fff;font:15px Inter,sans-serif}
+textarea{min-height:70px;resize:vertical}
+.secondary{background:#3b3b3b}
+.secondary:hover{background:#4a4a4a}
+.note{margin-top:18px;color:var(--muted);font-size:12px}
+:focus-visible{outline:2px solid #fb7045;outline-offset:2px}
+</style>
+</head>
+<body>
+<header><span class="mark">FW</span><strong>Firewatch</strong><a href="/">Community map</a></header>
+<main>
+{% if state == "invalid" %}
+  <h1>This review link isn't valid</h1>
+  <p class="sub">Check that you opened the full link from your Firewatch alert.</p>
+{% else %}
+  {% if state == "used" and event.status == "confirmed" %}
+    <div class="banner bad">Confirmed as a fire{% if event.reviewed_at %} on <time data-utc="{{ event.reviewed_at }}">{{ event.reviewed_at }}</time>{% endif %}. It is now on the <a href="/">community map</a> and routes avoid it.</div>
+  {% elif state == "used" %}
+    <div class="banner ok">Reviewed as not a fire{% if event.review_label_text %}: {{ event.review_label_text }}{% endif %}. Nothing was published. Firewatch won't re-alert for the same spot for a while unless it gets noticeably hotter.</div>
+  {% elif state == "expired" %}
+    <div class="banner warn">This review link has expired. Ask your Firewatch administrator to review this detection.</div>
+  {% endif %}
+
+  <h1>{% if state == "ok" %}Is this a fire?{% else %}Heat detection{% endif %}</h1>
+  <p class="sub">{{ camera_name }} · detected <time data-utc="{{ event.first_seen_at or event.timestamp }}">{{ event.first_seen_at or event.timestamp }}</time></p>
+
+  {% if event.image %}
+  <figure>
+    <img src="/{{ event.image }}" alt="Thermal image from {{ camera_name }}; the boxed area is the detected heat">
+    <figcaption>Thermal camera view. Brighter means hotter; the box marks the detected heat.</figcaption>
+  </figure>
+  {% endif %}
+
+  {% if event.context_images %}
+  <div class="thumbs">
+    {% for path in event.context_images %}
+    <figure>
+      <a href="/{{ path }}" target="_blank" rel="noopener"><img src="/{{ path }}" alt="Earlier or visible-light image {{ loop.index }}"></a>
+      <figcaption>{% if 'visible' in path %}Visible photo{% else %}Earlier snapshot {{ loop.index }}{% endif %}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if event.video %}
+  <figure><video src="/{{ event.video }}" controls playsinline preload="metadata"></video><figcaption>Camera clip</figcaption></figure>
+  {% endif %}
+
+  <div class="facts">
+    <div class="fact"><span>Hottest point</span><b>{{ '%.0f' | format(event.max_temperature_c) }} °C</b></div>
+    <div class="fact"><span>Hot area of view</span><b>{{ '%.1f' | format(event.fire_size_percent) }}%</b></div>
+    <div class="fact"><span>Severity estimate</span><b>{{ event.magnitude }}</b></div>
+    <div class="fact"><span>Seen for</span><b>{{ (event.duration_seconds // 60) | int }} min {{ (event.duration_seconds % 60) | int }} s</b></div>
+  </div>
+  <p class="where">Camera location: {{ '%.5f' | format(event.latitude) }}, {{ '%.5f' | format(event.longitude) }} ·
+    <a href="https://www.openstreetmap.org/?mlat={{ event.latitude }}&amp;mlon={{ event.longitude }}#map=15/{{ event.latitude }}/{{ event.longitude }}" target="_blank" rel="noopener noreferrer">open map</a></p>
+
+  {% if state == "ok" %}
+  <form class="decision" method="post" action="/review/{{ event.event_id }}">
+    <h2>Your answer</h2>
+    <p>"Yes" publishes this detection to the community map and routes start avoiding it. "No" keeps it private.</p>
+    <input type="hidden" name="token" value="{{ token }}">
+    <button class="fire{% if answer == 'fire' %} suggested{% endif %}" type="submit" name="decision" value="fire">Yes, it's a fire</button>
+    <details{% if answer == 'not_fire' %} open{% endif %}>
+      <summary class="btn">No, it's something else</summary>
+      <div class="other-body">
+        <label for="label">What was it?</label>
+        <select id="label" name="label">
+          {% for key, text in labels.items() %}<option value="{{ key }}">{{ text }}</option>{% endfor %}
+        </select>
+        <label for="note">Note (optional, private)</label>
+        <textarea id="note" name="note" maxlength="500" placeholder="e.g. neighbour's chimney"></textarea>
+        <button class="secondary" type="submit" name="decision" value="not_fire">Send: not a fire</button>
+      </div>
+    </details>
+  </form>
+  <p class="note">If there is immediate danger, call your local emergency number first. Firewatch is a warning aid, not an emergency service.</p>
+  {% endif %}
+{% endif %}
+</main>
+<script>
+document.querySelectorAll("time[data-utc]").forEach(el => {
+  const d = new Date(el.dataset.utc);
+  if (!isNaN(d)) el.textContent = d.toLocaleString([], {dateStyle: "medium", timeStyle: "short"});
+});
+</script>
+</body>
+</html>
