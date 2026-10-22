@@ -112,3 +112,47 @@ class LoginTests(ServerTestCase):
     def test_login_rate_limited(self):
         codes = [self.login_camera(self.client, "CAM-A", "x").status_code for _ in range(11)]
         self.assertEqual(codes[-1], 429)
+
+
+class TestEventIsolationTests(ServerTestCase):
+    def test_real_upload_does_not_merge_into_open_test_event(self):
+        test_row, _ = self.make_event(is_test=True)
+        real = self.upload_event("CAM-A")
+        self.assertNotIn("deduplicated", real)
+        self.assertNotEqual(real["event_id"], test_row["event_id"])
+
+    def test_test_event_does_not_merge_into_open_real_event(self):
+        real = self.upload_event("CAM-A")
+        test_row, _ = self.make_event(is_test=True)
+        self.assertNotEqual(real["event_id"], test_row["event_id"])
+        with self.db() as conn:
+            self.assertEqual(conn.execute("SELECT is_test FROM device_events WHERE event_id=?",
+                                          (real["event_id"],)).fetchone()[0], 0)
+
+    def test_real_false_alarm_does_not_quiet_test_detections(self):
+        api = sys.modules["device_api"]
+        real, _ = self.make_event(status="false_alarm")
+        with self.db() as conn:
+            conn.execute("UPDATE device_events SET hotspot_x=10, hotspot_y=8, last_seen_at=? WHERE event_id=?",
+                         (api.utc_now().isoformat(), real["event_id"]))
+            self.assertIsNone(api._find_dismissed_match(conn, "CAM-A", api.utc_now(), 10, 8, 100, is_test=True))
+            self.assertIsNotNone(api._find_dismissed_match(conn, "CAM-A", api.utc_now(), 10, 8, 100))
+
+    def test_test_alert_is_prefixed(self):
+        row, token = self.make_event(is_test=True)
+        sys.modules["device_api"].notify_new_event(row, token)
+        self.assertTrue(self.sent[-1]["body"].startswith("[TEST] "))
+
+    def test_real_alert_is_not_prefixed(self):
+        self.upload_event("CAM-A")
+        self.assertFalse(self.sent[-1]["body"].startswith("[TEST]"))
+
+    def test_confirmed_events_get_no_review_token(self):
+        row, token = self.make_event(status="confirmed", location=(45.0, -70.0))
+        self.assertIsNone(token)
+        self.assertEqual((row["latitude"], row["longitude"]), (45.0, -70.0))
+
+    def test_upload_still_works_through_create_event(self):
+        first = self.upload_event("CAM-A")
+        self.assertEqual(first["status"], "unconfirmed")
+        self.assertTrue(self.upload_event("CAM-A")["deduplicated"])

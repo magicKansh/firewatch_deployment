@@ -1,6 +1,8 @@
 """Shared base class for server tests that need cameras, logins and a fresh database."""
 import importlib
+import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -14,6 +16,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 ADMIN = {"Authorization": "Bearer test-admin-token"}
 ADMIN_TOKEN = "test-admin-token"
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 200
 # Every module that caches database paths or settings at import time; reloaded per test.
 APP_MODULES = ["database", "ratelimit", "fire_data", "notifications", "camera_api", "auth", "device_api",
                "test_fires", "admin_panel", "app", "routes", "map"]
@@ -79,3 +82,24 @@ class ServerTestCase(unittest.TestCase):
 
     def login_admin(self, client):
         return client.post("/admin/login", data={"password": ADMIN_TOKEN}, follow_redirects=False)
+
+    def upload_event(self, camera_id, temp=150.0, hotspot=(10.0, 8.0)):
+        files = [("image", (f"event_{camera_id}_heat.jpg", io.BytesIO(JPEG), "image/jpeg"))]
+        data = {"camera_id": camera_id, "camera_key": self.keys[camera_id], "latitude": 0, "longitude": 0,
+                "fire_size_percent": 3.2, "max_temperature_c": temp, "duration_seconds": 4,
+                "hotspot_x": hotspot[0], "hotspot_y": hotspot[1]}
+        r = self.client.post("/api/camera-event", data=data, files=files)
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def token_from_last_sms(self):
+        return re.search(r"token=([\w-]+)", self.sent[-1]["body"]).group(1)
+
+    def make_event(self, camera_id="CAM-A", *, status="unconfirmed", is_test=False, location=None):
+        """Insert an event directly (bypasses dedupe). Returns (row, review token or None)."""
+        api = sys.modules["device_api"]
+        with self.db() as conn:
+            camera = dict(conn.execute("SELECT * FROM cameras WHERE camera_id=?", (camera_id,)).fetchone())
+            return api.create_event(conn, api.new_event_id(), camera, fire_size_percent=2.0,
+                                    max_temperature_c=300.0, duration_seconds=5, status=status,
+                                    is_test=is_test, location=location)

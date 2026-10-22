@@ -118,28 +118,29 @@ def _parse_detected_at(value, now):
     return stamp if now - timedelta(days=7) <= stamp <= now + timedelta(minutes=5) else now
 
 
-def _find_open_event(conn, camera_id, now):
+def _find_open_event(conn, camera_id, now, is_test=False):
+    # Test events and real events never merge into each other.
     cutoff = (now - timedelta(seconds=EVENT_DEDUPE_SECONDS)).isoformat()
     return conn.execute(
         """SELECT * FROM device_events
            WHERE camera_id=? AND status IN ('unconfirmed','confirmed','active')
-             AND last_seen_at >= ?
+             AND last_seen_at >= ? AND is_test=?
            ORDER BY last_seen_at DESC LIMIT 1""",
-        (camera_id, cutoff),
+        (camera_id, cutoff, int(is_test)),
     ).fetchone()
 
 
-def _find_dismissed_match(conn, camera_id, now, hotspot_x, hotspot_y, max_temperature_c):
+def _find_dismissed_match(conn, camera_id, now, hotspot_x, hotspot_y, max_temperature_c, is_test=False):
     """A recent false alarm at the same spot in the frame, if this detection repeats it."""
     if hotspot_x < 0 or hotspot_y < 0:
         return None
     cutoff = (now - timedelta(seconds=FALSE_ALARM_COOLDOWN_SECONDS)).isoformat()
     rows = conn.execute(
         """SELECT * FROM device_events
-           WHERE camera_id=? AND status='false_alarm' AND last_seen_at >= ?
+           WHERE camera_id=? AND status='false_alarm' AND last_seen_at >= ? AND is_test=?
              AND hotspot_x >= 0 AND hotspot_y >= 0
            ORDER BY last_seen_at DESC LIMIT 10""",
-        (camera_id, cutoff),
+        (camera_id, cutoff, int(is_test)),
     ).fetchall()
     for row in rows:
         close = math.hypot(row["hotspot_x"] - hotspot_x, row["hotspot_y"] - hotspot_y) <= FALSE_ALARM_RADIUS_PX
@@ -175,6 +176,63 @@ def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, durat
     )
     _add_observation(conn, row["event_id"], now, fire_size_percent, max_temperature_c, duration_seconds, image_path)
     return row["event_id"], new_score, magnitude
+
+
+def new_event_id():
+    return uuid.uuid4().hex[:12]
+
+
+def create_event(conn, event_id, camera, *, fire_size_percent, max_temperature_c, duration_seconds,
+                 image_path="", video_path="", context_paths=(), visual_fire_score=0.0,
+                 detection_method="thermal", hotspot_x=-1.0, hotspot_y=-1.0, first_seen=None,
+                 location=None, status="unconfirmed", severity=None, is_test=False, now=None):
+    """Insert a new device event (+ first observation, + review token when it needs review).
+
+    Shared by Pi uploads and admin test fires. Returns (row, raw review token or None).
+    """
+    now = now or utc_now()
+    score, magnitude = severity or _severity(fire_size_percent, duration_seconds, max_temperature_c)
+    latitude, longitude = location or (float(camera["latitude"]), float(camera["longitude"]))
+    camera_id = camera["camera_id"]
+    row = {
+        "event_id": event_id, "camera_id": camera_id, "timestamp": now.isoformat(),
+        "first_seen_at": (first_seen or now).isoformat(), "last_seen_at": now.isoformat(),
+        "latitude": float(latitude), "longitude": float(longitude),
+        "fire_size_percent": round(fire_size_percent, 2), "max_temperature_c": round(max_temperature_c, 2),
+        "duration_seconds": round(duration_seconds, 1), "severity_index": score,
+        "magnitude": magnitude, "status": status, "image": image_path,
+        "video": video_path, "visual_fire_score": round(visual_fire_score, 4),
+        "detection_method": detection_method[:80],
+        "place": camera.get("name") or camera_id, "source": "device", "dedupe_key": _dedupe_key(camera_id),
+        "context_images": json.dumps(list(context_paths)),
+        "hotspot_x": hotspot_x if hotspot_x >= 0 else None,
+        "hotspot_y": hotspot_y if hotspot_y >= 0 else None,
+        "is_test": int(is_test),
+    }
+    if status == "confirmed":
+        row["confirmed_at"] = now.isoformat()
+    columns = list(row)
+    conn.execute(
+        f"INSERT INTO device_events ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
+        tuple(row[c] for c in columns),
+    )
+    _add_observation(conn, event_id, now, fire_size_percent, max_temperature_c, duration_seconds, image_path)
+    token = None
+    if status == "unconfirmed":
+        token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO confirmation_tokens(event_id,token_hash,created_at,expires_at) VALUES (?,?,?,?)",
+            (event_id, _hash_token(token), now.isoformat(), (now + timedelta(hours=TOKEN_TTL_HOURS)).isoformat()),
+        )
+    return row, token
+
+
+def notify_new_event(row, token):
+    """Send the review alert; never raises (a failed SMS must not lose the event)."""
+    try:
+        return send_fire_confirmation({**row, "confirm_token": token})
+    except Exception as exc:
+        return {"sms_sent": 0, "email_sent": 0, "error": str(exc)}
 
 
 @router.post("/api/camera-event")
@@ -230,43 +288,18 @@ async def camera_event(
             return {"ok": True, "event_id": dismissed["event_id"], "suppressed": True, "status": "false_alarm",
                     "reason": "Same hotspot was recently reviewed as not a fire."}
 
-        event_id = uuid.uuid4().hex[:12]
-        token = secrets.token_urlsafe(32)
-        first_seen = _parse_detected_at(detected_at, now)
-        score, magnitude = _severity(fire_size_percent, duration_seconds, max_temperature_c)
-        row = {
-            "event_id": event_id, "camera_id": camera_id, "timestamp": now.isoformat(),
-            "first_seen_at": first_seen.isoformat(), "last_seen_at": now.isoformat(),
-            "latitude": float(camera["latitude"]), "longitude": float(camera["longitude"]),
-            "fire_size_percent": round(fire_size_percent, 2), "max_temperature_c": round(max_temperature_c, 2),
-            "duration_seconds": round(duration_seconds, 1), "severity_index": score,
-            "magnitude": magnitude, "status": "unconfirmed", "image": _save_image(image, event_id),
-            "video": _save_video(video, event_id), "visual_fire_score": round(visual_fire_score, 4),
-            "detection_method": detection_method[:80],
-            "place": camera.get("name") or camera_id, "source": "device", "dedupe_key": _dedupe_key(camera_id),
-            "context_images": json.dumps(_save_context(context_images, event_id)),
-            "hotspot_x": hotspot_x if hotspot_x >= 0 else None,
-            "hotspot_y": hotspot_y if hotspot_y >= 0 else None,
-        }
-        columns = list(row)
-        conn.execute(
-            f"INSERT INTO device_events ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
-            tuple(row[c] for c in columns),
-        )
-        _add_observation(conn, event_id, now, fire_size_percent, max_temperature_c, duration_seconds, row["image"])
-        conn.execute(
-            "INSERT INTO confirmation_tokens(event_id,token_hash,created_at,expires_at) VALUES (?,?,?,?)",
-            (event_id, _hash_token(token), now.isoformat(), (now + timedelta(hours=TOKEN_TTL_HOURS)).isoformat()),
+        event_id = new_event_id()
+        row, token = create_event(
+            conn, event_id, camera, fire_size_percent=fire_size_percent, max_temperature_c=max_temperature_c,
+            duration_seconds=duration_seconds, image_path=_save_image(image, event_id),
+            video_path=_save_video(video, event_id), context_paths=_save_context(context_images, event_id),
+            visual_fire_score=visual_fire_score, detection_method=detection_method,
+            hotspot_x=hotspot_x, hotspot_y=hotspot_y, first_seen=_parse_detected_at(detected_at, now), now=now,
         )
 
     invalidate_cache()
-    try:
-        result = send_fire_confirmation({**row, "confirm_token": token})
-    except Exception as exc:
-        result = {"sms_sent": 0, "email_sent": 0, "error": str(exc)}
-
-    return {"ok": True, "event_id": event_id, "status": "unconfirmed", "severity_index": score,
-            "magnitude": magnitude, "notifications": result}
+    return {"ok": True, "event_id": event_id, "status": "unconfirmed", "severity_index": row["severity_index"],
+            "magnitude": row["magnitude"], "notifications": notify_new_event(row, token)}
 
 
 @router.post("/api/heartbeat")
