@@ -1,18 +1,17 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from pathlib import Path
 
 from database import IMAGE_DIR, init_db, migrate_legacy_csvs
+from ratelimit import limiter
 
 BASE_DIR = Path(__file__).resolve().parent
 init_db()
 migrate_legacy_csvs()
 
 app = FastAPI(title="Firewatch")
-limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -25,6 +24,7 @@ app.mount("/images", StaticFiles(directory=image_dir), name="images")
 
 from device_api import router as device_router
 from camera_api import router as camera_router
-import auth  # noqa: E402,F401  (sessions; login routes are added below in a later step)
+from auth import router as auth_router
 app.include_router(device_router)
 app.include_router(camera_router)
+app.include_router(auth_router)

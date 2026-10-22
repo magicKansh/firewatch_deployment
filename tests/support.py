@@ -65,3 +65,17 @@ class ServerTestCase(unittest.TestCase):
 
     def db(self):
         return sys.modules["database"].get_connection()
+
+    def set_login_password(self, camera_id):
+        auth = sys.modules["auth"]
+        password = auth.generate_password()
+        with self.db() as conn:
+            conn.execute("UPDATE cameras SET login_password_hash=? WHERE camera_id=?",
+                         (auth.hash_password(password), camera_id))
+        return password
+
+    def login_camera(self, client, camera_id, password):
+        return client.post("/login", data={"camera_id": camera_id, "password": password}, follow_redirects=False)
+
+    def login_admin(self, client):
+        return client.post("/admin/login", data={"password": ADMIN_TOKEN}, follow_redirects=False)

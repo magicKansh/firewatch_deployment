@@ -5,16 +5,26 @@ Read paths ask the viewer what they may show; sessions live in SQLite so they ca
 """
 import hashlib
 import hmac
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from fastapi import Request
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 from database import TEST_CAMERA_ID, get_connection
+from ratelimit import limiter
+
+router = APIRouter()
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
 SESSION_COOKIE = "fw_session"
 SESSION_DAYS = 30
+_SECURE_COOKIE = (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").startswith("https://")
+CAMERA_LOGIN_ERROR = "Camera ID or password is wrong."
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1, "dklen": 32}
 
 
@@ -119,3 +129,88 @@ def get_viewer(request: Request) -> Viewer:
         return Viewer(is_admin=True)
     with get_connection() as conn:
         return load_viewer(conn, request.cookies.get(SESSION_COOKIE))
+
+
+# --- Login pages --------------------------------------------------------------------------------
+
+# Checked when the camera doesn't exist, so a wrong ID takes as long as a wrong password.
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(12))
+
+
+def _session_exists(conn, token):
+    if not token:
+        return False
+    row = conn.execute("SELECT expires_at FROM sessions WHERE token_hash=?", (_hash_token(token),)).fetchone()
+    return bool(row) and datetime.fromisoformat(row["expires_at"]) >= _now()
+
+
+def _with_session_cookie(response, token):
+    response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_DAYS * 86400, httponly=True,
+                        secure=_SECURE_COOKIE, samesite="lax", path="/")
+    return response
+
+
+def _admin_token():
+    from camera_api import ADMIN_TOKEN
+    return ADMIN_TOKEN or ""
+
+
+def _login_page(request, mode, error="", status_code=200):
+    with get_connection() as conn:
+        viewer = load_viewer(conn, request.cookies.get(SESSION_COOKIE))
+    return templates.TemplateResponse(request=request, name="login.html", status_code=status_code, context={
+        "mode": mode, "error": error, "viewer": viewer, "admin_enabled": bool(_admin_token()),
+    })
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return _login_page(request, "camera")
+
+
+@router.post("/login", response_class=HTMLResponse)
+@limiter.limit("10/minute")
+def login_submit(request: Request, camera_id: str = Form(""), password: str = Form("")):
+    camera_id = camera_id.strip()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT login_password_hash FROM cameras WHERE camera_id=? AND enabled=1 AND camera_id<>?",
+            (camera_id, TEST_CAMERA_ID),
+        ).fetchone()
+        stored = row["login_password_hash"] if row else None
+        ok = verify_password(password, stored or _DUMMY_HASH) and bool(stored)
+        if not ok:
+            return _login_page(request, "camera", CAMERA_LOGIN_ERROR, status_code=401)
+        token = request.cookies.get(SESSION_COOKIE)
+        if _session_exists(conn, token):
+            add_camera_to_session(conn, token, camera_id)   # "Add another camera"
+        else:
+            token = create_session(conn, camera_ids=[camera_id])
+    return _with_session_cookie(RedirectResponse("/", status_code=303), token)
+
+
+@router.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(request: Request):
+    return _login_page(request, "admin")
+
+
+@router.post("/admin/login", response_class=HTMLResponse)
+@limiter.limit("10/minute")
+def admin_login_submit(request: Request, password: str = Form("")):
+    expected = _admin_token()
+    if not expected:
+        return _login_page(request, "admin", "Admin login is not configured.", status_code=403)
+    if not hmac.compare_digest(password.encode(), expected.encode()):
+        return _login_page(request, "admin", "Wrong admin password.", status_code=401)
+    with get_connection() as conn:
+        token = create_session(conn, is_admin=True)
+    return _with_session_cookie(RedirectResponse("/admin", status_code=303), token)
+
+
+@router.post("/logout")
+def logout(request: Request):
+    with get_connection() as conn:
+        delete_session(conn, request.cookies.get(SESSION_COOKIE))
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
