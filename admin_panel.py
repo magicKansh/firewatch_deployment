@@ -9,6 +9,7 @@ from auth import Viewer, get_viewer
 from camera_api import add_camera, reset_login_password, reset_pi_key, set_camera_enabled
 from database import TEST_CAMERA_ID, get_connection
 from device_api import camera_status
+import test_fires
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -32,7 +33,8 @@ def _cameras():
 
 def _page(request, message="", error="", status_code=200, **extra):
     return templates.TemplateResponse(request=request, name="admin.html", status_code=status_code, context={
-        "cameras": _cameras(), "message": message, "error": error, **extra,
+        "cameras": _cameras(), "test_fires": test_fires.list_test_fires(), "severities": list(test_fires.SEVERITY_INDEX),
+        "message": message, "error": error, **extra,
     })
 
 
@@ -105,3 +107,62 @@ def admin_set_enabled(request: Request, camera_id: str, enabled: str = Form("1")
         set_camera_enabled(conn, camera_id, enabled == "1")
         return RedirectResponse("/admin", status_code=303)
     return _camera_action(request, viewer, camera_id, action)
+
+
+# --- Test fires (admin only; never shown to the public or camera logins) -------------------------
+
+def _number(value, label, cast=float):
+    try:
+        return cast(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a number.")
+
+
+@router.post("/admin/test-fires/simulate", response_class=HTMLResponse)
+def admin_simulate(request: Request, camera_id: str = Form(""), max_temperature_c: str = Form("350"),
+                   hot_pixels: str = Form("12"), send_alerts: str = Form(""), viewer: Viewer = Depends(get_viewer)):
+    if (redirect := _guard(viewer)):
+        return redirect
+    try:
+        result = test_fires.simulate_detection(
+            camera_id.strip(), _number(max_temperature_c, "Max temperature"),
+            _number(hot_pixels, "Hot spot size", int), send_alerts=bool(send_alerts))
+    except ValueError as exc:
+        return _page(request, error=str(exc), status_code=400)
+    sent = result["notifications"]
+    alerts = (f"{sent.get('sms_sent', 0)} SMS and {sent.get('email_sent', 0)} email alerts sent with [TEST]."
+              if sent else "No alerts sent.")
+    link = f"/review/{result['event_id']}?token={result['token']}"
+    return _page(request, message=f'Test detection created for {camera_id.strip()}. {alerts} '
+                                  f'<a href="{link}">Open review page</a>')
+
+
+@router.post("/admin/test-fires/drop", response_class=HTMLResponse)
+def admin_drop(request: Request, latitude: str = Form(""), longitude: str = Form(""), severity: str = Form("Moderate"),
+               viewer: Viewer = Depends(get_viewer)):
+    if (redirect := _guard(viewer)):
+        return redirect
+    try:
+        lat, lon = _number(latitude, "Latitude"), _number(longitude, "Longitude")
+        test_fires.drop_test_fire(lat, lon, severity)
+    except ValueError as exc:
+        return _page(request, error=str(exc), status_code=400)
+    return _page(request, message=f"Confirmed {severity} test fire placed at {lat:.5f}, {lon:.5f}. "
+                                  f'It shows on <a href="/">your map</a> and in your route planning only.')
+
+
+@router.post("/admin/test-fires/delete-all", response_class=HTMLResponse)
+def admin_delete_all(request: Request, viewer: Viewer = Depends(get_viewer)):
+    if (redirect := _guard(viewer)):
+        return redirect
+    count = test_fires.delete_test_fires()
+    return _page(request, message=f"Deleted {count} test fire{'s' if count != 1 else ''}.")
+
+
+@router.post("/admin/test-fires/{event_id}/delete", response_class=HTMLResponse)
+def admin_delete_one(request: Request, event_id: str, viewer: Viewer = Depends(get_viewer)):
+    if (redirect := _guard(viewer)):
+        return redirect
+    if not test_fires.delete_test_fires([event_id]):
+        return _page(request, error="No test fire with that ID.", status_code=404)
+    return _page(request, message="Test fire deleted.")

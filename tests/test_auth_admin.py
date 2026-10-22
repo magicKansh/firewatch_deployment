@@ -1,8 +1,10 @@
 """Camera logins, per-viewer visibility and the admin control panel."""
+import importlib
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -398,3 +400,114 @@ class AdminCameraTests(ServerTestCase):
                              capture_output=True, text=True, env=dict(os.environ), check=True).stdout
         pw = re.search(r"Login password for CAM-A: (\S+)", out).group(1)
         self.assertEqual(self.login_camera(self.new_client(), "CAM-A", pw).status_code, 303)
+
+
+class TestFireTests(ServerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = self.new_client()
+        self.login_admin(self.admin)
+        self.images = Path(os.environ["FIREWATCH_IMAGE_DIR"])
+
+    def simulate(self, **overrides):
+        form = {"camera_id": "CAM-A", "max_temperature_c": "350", "hot_pixels": "12", "send_alerts": "1", **overrides}
+        return self.admin.post("/admin/test-fires/simulate", data={k: v for k, v in form.items() if v is not None})
+
+    def test_synthetic_frame_matches_requested_size(self):
+        tf, thermal = sys.modules["test_fires"], importlib.import_module("thermal")
+        for hot_pixels in (6, 12, 40):
+            stats = thermal.analyze(tf.synthetic_frame(350.0, hot_pixels), 80.0, 25.0, 6)
+            self.assertEqual(stats.cluster, hot_pixels)
+            self.assertAlmostEqual(stats.max_temp, 350.0, delta=0.01)
+
+    def test_simulate_runs_full_pipeline_privately(self):
+        page = self.simulate()
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Open review page", page.text)
+        self.assertTrue(self.sent[-1]["body"].startswith("[TEST] "))
+        event = self.admin.get("/api/device-events").json()["events"][0]
+        self.assertEqual((event["is_test"], event["status"], event["camera_id"]), (1, "unconfirmed", "CAM-A"))
+        self.assertTrue((self.images / f"{event['event_id']}.jpg").is_file())
+        self.assertEqual(self.new_client().get("/api/device-events").json()["events"], [])
+        cam = self.new_client()
+        self.login_camera(cam, "CAM-A", self.set_login_password("CAM-A"))
+        self.assertEqual(cam.get("/api/device-events").json()["events"], [])
+
+    def test_simulated_review_link_works(self):
+        self.simulate()
+        link = re.search(r'href="(/review/[^"]+\?token=[^"]+)"', self.simulate(camera_id="CAM-B").text).group(1)
+        event_id = link.split("/")[2].split("?")[0]
+        token = link.split("token=")[1]
+        self.new_client().post(f"/review/{event_id}", data={"token": token, "decision": "fire"})
+        statuses = {e["event_id"]: e["status"] for e in self.admin.get("/api/device-events").json()["events"]}
+        self.assertEqual(statuses[event_id], "confirmed")
+        self.assertEqual(self.new_client().get("/api/device-events").json()["events"], [])  # still admin-only
+
+    def test_simulate_without_alerts_sends_nothing(self):
+        before = len(self.sent)
+        self.simulate(send_alerts=None)
+        self.assertEqual(len(self.sent), before)
+        self.assertEqual(len(sys.modules["test_fires"].list_test_fires()), 1)
+
+    def test_simulate_rejects_bad_input(self):  # Review Focus 4
+        for bad in ({"hot_pixels": "0"}, {"hot_pixels": "999"}, {"max_temperature_c": "20"},
+                    {"max_temperature_c": "abc"}, {"camera_id": "__test__"}, {"camera_id": "NOPE"}):
+            self.assertEqual(self.simulate(**bad).status_code, 400, bad)
+        with self.db() as conn:
+            conn.execute("UPDATE cameras SET enabled=0 WHERE camera_id='CAM-B'")
+        self.assertEqual(self.simulate(camera_id="CAM-B").status_code, 400)
+        self.assertEqual(sys.modules["test_fires"].list_test_fires(), [])
+
+    def test_drop_fire_is_confirmed_admin_only(self):
+        r = self.admin.post("/admin/test-fires/drop", data={"latitude": "45.0", "longitude": "-70.0", "severity": "High"})
+        self.assertEqual(r.status_code, 200)
+        [fire] = sys.modules["test_fires"].list_test_fires()
+        self.assertEqual((fire["status"], fire["camera_id"], fire["magnitude"], fire["severity_index"]),
+                         ("confirmed", "__test__", "High", 55))
+        self.assertEqual((fire["latitude"], fire["longitude"]), (45.0, -70.0))
+        self.assertNotIn("TEST fires", self.new_client().get("/api/map-figure").text)
+        self.assertIn("TEST fires", self.admin.get("/api/map-figure").text)
+        self.assertNotIn('data-camera="__test__"', self.admin.get("/admin").text)
+        self.assertEqual([c["camera_id"] for c in self.admin.get("/api/cameras/status").json()["cameras"]],
+                         ["CAM-A", "CAM-B"])
+
+    def test_drop_fire_rejects_bad_input(self):
+        for bad in ({"latitude": "95"}, {"longitude": "x"}, {"severity": "Huge"}):
+            form = {"latitude": "45", "longitude": "-70", "severity": "Low", **bad}
+            self.assertEqual(self.admin.post("/admin/test-fires/drop", data=form).status_code, 400, bad)
+
+    def test_test_camera_cannot_log_in(self):
+        tf = sys.modules["test_fires"]
+        tf.drop_test_fire(45.0, -70.0, "Low")
+        self.assertEqual(self.login_camera(self.new_client(), "__test__", "").status_code, 401)
+
+    def test_panel_lists_test_fires(self):
+        tf = sys.modules["test_fires"]
+        event_id = tf.drop_test_fire(45.0, -70.0, "Low")
+        self.assertIn(event_id, self.admin.get("/admin").text)
+
+    def test_delete_all_tolerates_missing_files(self):  # Review Focus 5
+        tf = sys.modules["test_fires"]
+        event_id = tf.simulate_detection("CAM-A", send_alerts=False)["event_id"]
+        tf.drop_test_fire(45.0, -70.0, "Low")
+        (self.images / f"{event_id}.jpg").unlink()
+        real = self.upload_event("CAM-B")["event_id"]
+        self.admin.post("/admin/test-fires/delete-all")
+        self.assertEqual(tf.list_test_fires(), [])
+        self.assertIn(real, {e["event_id"] for e in self.admin.get("/api/device-events").json()["events"]})
+
+    def test_delete_one_removes_its_image(self):
+        tf = sys.modules["test_fires"]
+        event_id = tf.simulate_detection("CAM-A", send_alerts=False)["event_id"]
+        self.admin.post(f"/admin/test-fires/{event_id}/delete")
+        self.assertFalse((self.images / f"{event_id}.jpg").exists())
+        self.assertEqual(tf.list_test_fires(), [])
+
+    def test_delete_refuses_real_events(self):
+        real = self.upload_event("CAM-A")["event_id"]
+        self.assertEqual(self.admin.post(f"/admin/test-fires/{real}/delete").status_code, 404)
+        self.assertIn(real, {e["event_id"] for e in self.admin.get("/api/device-events").json()["events"]})
+
+    def test_test_fire_actions_require_admin(self):
+        for path in ("/admin/test-fires/simulate", "/admin/test-fires/drop", "/admin/test-fires/delete-all"):
+            self.assertEqual(self.new_client().post(path, follow_redirects=False).status_code, 303)

@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-{% block head %}{% endblock %}
+{% block head %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">{% endblock %}
 <style>
 :root{--bg:#141514;--card:#1e1f1e;--line:rgba(255,255,255,.13);--text:#f8fafc;--muted:#c5c8c7;--accent:#f0440a;--accent-hover:#d93a08;--ok:#86efac;--ok-bg:rgba(22,163,74,.16);--warn:#fde68a;--warn-bg:rgba(217,119,6,.18);--bad:#fecaca;--bad-bg:rgba(220,38,38,.2);--test:#c4b5fd;--test-bg:rgba(124,58,237,.2)}
 *{box-sizing:border-box}
@@ -41,6 +41,7 @@ h2{margin:28px 0 4px;font-size:17px}
 .actions form{margin:0}
 button{padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font:600 13px Inter,sans-serif;cursor:pointer}
 button:hover{background:rgba(255,255,255,.14)}
+a.btn{display:inline-block;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font:600 13px Inter,sans-serif;text-decoration:none}
 button.primary{background:var(--accent);border-color:var(--accent)}
 button.primary:hover{background:var(--accent-hover)}
 button.danger{border-color:rgba(248,113,113,.5);color:var(--bad)}
@@ -104,7 +105,61 @@ input,select{width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba
       <div><button class="primary" type="submit">Add camera</button></div>
     </div>
   </form>
-  {% block test_fires %}{% endblock %}
+
+  <h2>Test fires <span class="chip test">admin only</span></h2>
+  <p class="sub">Test fires are labelled TEST and never shown to the public or to camera logins. Confirmed ones are avoided in <em>your</em> route planning only.</p>
+
+  <form class="panel" method="post" action="/admin/test-fires/simulate">
+    <b>Simulate a camera detection</b>
+    <p class="sub">Draws a fake heat-map with the same code as the Pi and runs the full alert and review flow.</p>
+    <div class="grid">
+      <div><label for="sim_camera">Camera</label>
+        <select id="sim_camera" name="camera_id" required>
+          {% for camera in cameras if camera.enabled %}<option value="{{ camera.camera_id }}">{{ camera.camera_id }} · {{ camera.name }}</option>{% endfor %}
+        </select></div>
+      <div><label for="sim_temp">Max temperature (°C)</label><input id="sim_temp" name="max_temperature_c" type="number" min="100" max="1000" value="350" required></div>
+      <div><label for="sim_px">Hot spot (sensor pixels)</label><input id="sim_px" name="hot_pixels" type="number" min="6" max="200" value="12" required></div>
+      <div><label class="check"><input type="checkbox" name="send_alerts" value="1" checked> Send real [TEST] alerts</label></div>
+      <div><button class="primary" type="submit">Simulate detection</button></div>
+    </div>
+  </form>
+
+  <form class="panel" method="post" action="/admin/test-fires/drop" style="margin-top:10px">
+    <b>Drop a confirmed fire on the map</b>
+    <p class="sub">Click the map to choose the spot, or type coordinates.</p>
+    <div id="drop-map" style="height:300px;border-radius:10px;margin:0 0 12px;background:#2a2b2a"></div>
+    <div class="grid">
+      <div><label for="drop_lat">Latitude</label><input id="drop_lat" name="latitude" inputmode="decimal" required></div>
+      <div><label for="drop_lon">Longitude</label><input id="drop_lon" name="longitude" inputmode="decimal" required></div>
+      <div><label for="drop_sev">Severity</label>
+        <select id="drop_sev" name="severity">{% for s in severities %}<option{% if s == "Moderate" %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div><button class="primary" type="submit">Drop test fire</button></div>
+    </div>
+  </form>
+
+  <div class="list" style="margin-top:14px">
+  {% for fire in test_fires %}
+    <div class="item">
+      <div>
+        <b>{{ fire.magnitude }}</b><span class="chip test">TEST</span><span class="chip {{ 'yes' if fire.status == 'confirmed' else 'no' }}">{{ fire.status | replace('_', ' ') }}</span>
+        <div class="meta">{{ 'Dropped on map' if fire.camera_id == '__test__' else 'Simulated on ' ~ fire.camera_id }}
+          · {{ '%.4f' | format(fire.latitude) }}, {{ '%.4f' | format(fire.longitude) }}
+          · <time data-utc="{{ fire.first_seen_at }}">{{ fire.first_seen_at }}</time> · {{ fire.event_id }}</div>
+      </div>
+      <div class="actions">
+        {% if fire.camera_id != '__test__' %}<a class="btn" href="/review/{{ fire.event_id }}">Review page</a>{% endif %}
+        <form method="post" action="/admin/test-fires/{{ fire.event_id }}/delete"><button class="danger" type="submit">Delete</button></form>
+      </div>
+    </div>
+  {% else %}
+    <div class="empty">No test fires.</div>
+  {% endfor %}
+  </div>
+  {% if test_fires %}
+  <form method="post" action="/admin/test-fires/delete-all" style="margin-top:10px" onsubmit="return confirm('Delete all {{ test_fires | length }} test fires and their images?')">
+    <button class="danger" type="submit">Delete all test fires</button>
+  </form>
+  {% endif %}
 {% endblock %}
 </main>
 <script>
@@ -113,6 +168,40 @@ document.querySelectorAll("time[data-utc]").forEach(el => {
   if (value) { const d = new Date(value); if (!isNaN(d)) el.textContent = d.toLocaleString(); }
 });
 </script>
-{% block scripts %}{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  const el = document.getElementById("drop-map");
+  if (!el || !window.L) return;
+  const cameras = {{ cameras | tojson }};
+  const fires = {{ test_fires | selectattr("status", "equalto", "confirmed") | list | tojson }};
+  const map = L.map(el, {scrollWheelZoom: false});
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+  }).addTo(map);
+  const points = [];
+  cameras.forEach(c => {
+    L.circleMarker([c.latitude, c.longitude], {radius: 6, color: "#16a34a", fillOpacity: .9})
+      .bindTooltip(c.camera_id).addTo(map);
+    points.push([c.latitude, c.longitude]);
+  });
+  fires.forEach(f => {
+    L.circleMarker([f.latitude, f.longitude], {radius: 7, color: "#7c3aed", fillOpacity: .9})
+      .bindTooltip("TEST · " + f.magnitude).addTo(map);
+    points.push([f.latitude, f.longitude]);
+  });
+  if (points.length) map.fitBounds(points, {padding: [30, 30], maxZoom: 12});
+  else map.setView([39.5, -98.35], 4);
+  const lat = document.getElementById("drop_lat"), lon = document.getElementById("drop_lon");
+  let pick = null;
+  map.on("click", e => {
+    lat.value = e.latlng.lat.toFixed(5);
+    lon.value = e.latlng.lng.toFixed(5);
+    pick = pick ? pick.setLatLng(e.latlng) : L.marker(e.latlng).addTo(map);
+  });
+})();
+</script>
+{% endblock %}
 </body>
 </html>
