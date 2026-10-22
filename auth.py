@@ -77,14 +77,22 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+def _admin_fingerprint():
+    """Ties admin sessions to the current FIREWATCH_ADMIN_TOKEN: rotating or unsetting the token
+    signs every admin out. None when admin login is disabled."""
+    token = _admin_token()
+    return hmac.new(token.encode(), b"firewatch-admin-session", hashlib.sha256).hexdigest() if token else None
+
+
 def create_session(conn, *, is_admin=False, camera_ids=()):
     """Start a session and return its raw token (only the hash is stored)."""
     now = _now()
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now.isoformat(),))
     token = secrets.token_urlsafe(32)
     conn.execute(
-        "INSERT INTO sessions(token_hash,is_admin,created_at,expires_at) VALUES (?,?,?,?)",
-        (_hash_token(token), int(is_admin), now.isoformat(), (now + timedelta(days=SESSION_DAYS)).isoformat()),
+        "INSERT INTO sessions(token_hash,is_admin,admin_fp,created_at,expires_at) VALUES (?,?,?,?,?)",
+        (_hash_token(token), int(is_admin), _admin_fingerprint() if is_admin else None,
+         now.isoformat(), (now + timedelta(days=SESSION_DAYS)).isoformat()),
     )
     for camera_id in camera_ids:
         add_camera_to_session(conn, token, camera_id)
@@ -100,15 +108,17 @@ def load_viewer(conn, token):
     if not token:
         return ANONYMOUS
     token_hash = _hash_token(token)
-    row = conn.execute("SELECT is_admin, expires_at FROM sessions WHERE token_hash=?", (token_hash,)).fetchone()
+    row = conn.execute("SELECT is_admin, admin_fp, expires_at FROM sessions WHERE token_hash=?", (token_hash,)).fetchone()
     if not row or datetime.fromisoformat(row["expires_at"]) < _now():
         return ANONYMOUS
+    current_fp = _admin_fingerprint()
+    is_admin = bool(row["is_admin"]) and bool(current_fp) and hmac.compare_digest(row["admin_fp"] or "", current_fp)
     cameras = conn.execute(
         """SELECT sc.camera_id FROM session_cameras sc JOIN cameras c ON c.camera_id = sc.camera_id
            WHERE sc.token_hash=? AND c.enabled=1 AND c.camera_id <> ?""",
         (token_hash, TEST_CAMERA_ID),
     ).fetchall()
-    return Viewer(is_admin=bool(row["is_admin"]), camera_ids=frozenset(r["camera_id"] for r in cameras))
+    return Viewer(is_admin=is_admin, camera_ids=frozenset(r["camera_id"] for r in cameras))
 
 
 def delete_session(conn, token):
@@ -137,11 +147,13 @@ def get_viewer(request: Request) -> Viewer:
 _DUMMY_HASH = hash_password(secrets.token_urlsafe(12))
 
 
-def _session_exists(conn, token):
-    if not token:
-        return False
-    row = conn.execute("SELECT expires_at FROM sessions WHERE token_hash=?", (_hash_token(token),)).fetchone()
-    return bool(row) and datetime.fromisoformat(row["expires_at"]) >= _now()
+def _replace_session(conn, old_token, *, add_camera=None, make_admin=False):
+    """Sign-in always issues a brand-new token (no session fixation). A still-valid old session's
+    cameras and admin rights carry over, so "Add another camera" keeps working."""
+    old = load_viewer(conn, old_token)
+    delete_session(conn, old_token)
+    cameras = set(old.camera_ids) | ({add_camera} if add_camera else set())
+    return create_session(conn, is_admin=make_admin or old.is_admin, camera_ids=sorted(cameras))
 
 
 def _with_session_cookie(response, token):
@@ -181,11 +193,7 @@ def login_submit(request: Request, camera_id: str = Form(""), password: str = Fo
         ok = verify_password(password, stored or _DUMMY_HASH) and bool(stored)
         if not ok:
             return _login_page(request, "camera", CAMERA_LOGIN_ERROR, status_code=401)
-        token = request.cookies.get(SESSION_COOKIE)
-        if _session_exists(conn, token):
-            add_camera_to_session(conn, token, camera_id)   # "Add another camera"
-        else:
-            token = create_session(conn, camera_ids=[camera_id])
+        token = _replace_session(conn, request.cookies.get(SESSION_COOKIE), add_camera=camera_id)
     return _with_session_cookie(RedirectResponse("/", status_code=303), token)
 
 
@@ -203,6 +211,7 @@ def admin_login_submit(request: Request, password: str = Form("")):
     if not hmac.compare_digest(password.encode(), expected.encode()):
         return _login_page(request, "admin", "Wrong admin password.", status_code=401)
     with get_connection() as conn:
+        delete_session(conn, request.cookies.get(SESSION_COOKIE))
         token = create_session(conn, is_admin=True)
     return _with_session_cookie(RedirectResponse("/admin", status_code=303), token)
 

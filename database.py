@@ -124,6 +124,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS sessions (
                 token_hash TEXT PRIMARY KEY,
                 is_admin INTEGER NOT NULL DEFAULT 0,
+                admin_fp TEXT,
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
@@ -154,6 +155,7 @@ def init_db():
                 "login_password_hash": "TEXT",
             },
             "subscribers": {"enabled": "INTEGER NOT NULL DEFAULT 1"},
+            "sessions": {"admin_fp": "TEXT"},
             "device_events": {
                 "first_seen_at": "TEXT NOT NULL DEFAULT ''",
                 "last_seen_at": "TEXT NOT NULL DEFAULT ''",

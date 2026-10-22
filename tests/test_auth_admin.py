@@ -511,3 +511,57 @@ class TestFireTests(ServerTestCase):
     def test_test_fire_actions_require_admin(self):
         for path in ("/admin/test-fires/simulate", "/admin/test-fires/drop", "/admin/test-fires/delete-all"):
             self.assertEqual(self.new_client().post(path, follow_redirects=False).status_code, 303)
+
+
+class SessionHardeningTests(ServerTestCase):
+    def cookie(self, client):
+        return client.cookies.get("fw_session")
+
+    def test_login_issues_fresh_token_and_keeps_cameras(self):
+        pa, pb = self.set_login_password("CAM-A"), self.set_login_password("CAM-B")
+        self.login_camera(self.client, "CAM-A", pa)
+        first = self.cookie(self.client)
+        self.login_camera(self.client, "CAM-B", pb)
+        second = self.cookie(self.client)
+        self.assertNotEqual(first, second)
+        auth = sys.modules["auth"]
+        with self.db() as conn:
+            self.assertEqual(auth.load_viewer(conn, second).camera_ids, frozenset({"CAM-A", "CAM-B"}))
+            self.assertTrue(auth.load_viewer(conn, first).is_anonymous)
+
+    def test_planted_session_does_not_gain_victim_camera(self):
+        attacker, victim = self.new_client(), self.new_client()
+        self.login_camera(attacker, "CAM-A", self.set_login_password("CAM-A"))
+        for cookie in attacker.cookies.jar:   # plant the attacker's session in the victim's browser
+            victim.cookies.jar.set_cookie(cookie)
+        self.login_camera(victim, "CAM-B", self.set_login_password("CAM-B"))
+        self.assertEqual(attacker.get("/api/cameras/status").json()["cameras"], [])
+
+    def test_admin_login_replaces_previous_session(self):
+        self.login_camera(self.client, "CAM-A", self.set_login_password("CAM-A"))
+        before = self.cookie(self.client)
+        self.login_admin(self.client)
+        with self.db() as conn:
+            self.assertTrue(sys.modules["auth"].load_viewer(conn, before).is_anonymous)
+
+    def client_after_token_change(self, client, new_token):
+        os.environ["FIREWATCH_ADMIN_TOKEN"] = new_token
+        fresh = TestClient(reload_app().app, base_url="https://testserver")
+        for cookie in client.cookies.jar:     # same browser, restarted server
+            fresh.cookies.jar.set_cookie(cookie)
+        return fresh
+
+    def test_admin_session_dies_when_token_rotated(self):
+        self.login_admin(self.client)
+        fresh = self.client_after_token_change(self.client, "rotated-admin-token")
+        self.assertEqual(fresh.get("/admin", follow_redirects=False).status_code, 303)
+
+    def test_admin_session_dies_when_token_unset(self):
+        self.login_admin(self.client)
+        fresh = self.client_after_token_change(self.client, "")
+        self.assertEqual(fresh.get("/admin", follow_redirects=False).status_code, 303)
+
+    def test_admin_session_survives_restart_with_same_token(self):
+        self.login_admin(self.client)
+        fresh = self.client_after_token_change(self.client, "test-admin-token")
+        self.assertEqual(fresh.get("/admin", follow_redirects=False).status_code, 200)
