@@ -194,3 +194,58 @@ class VisibilityApiTests(ServerTestCase):
     def test_bearer_admin_still_works(self):
         from tests.support import ADMIN
         self.assertEqual(len(self.anon.get("/api/device-events", headers=ADMIN).json()["events"]), 5)
+
+
+class VisibilityMapTests(ServerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.make_visibility_fixture()
+
+    def traces(self, client):
+        """{trace name: all hover text of that trace}"""
+        data = client.get("/api/map-figure").json()["data"]
+        return {t.get("name"): " | ".join(str(x) for x in (t.get("text") or [])) for t in data}
+
+    def test_visitor_map_has_no_cameras_or_private_events(self):
+        traces = self.traces(self.anon)
+        everything = " ".join(traces.values())
+        self.assertNotIn("Camera CAM-", everything)      # no camera markers
+        self.assertNotIn("CAM-A", everything)            # A only has private/test events
+        self.assertNotIn("Needs review", traces)
+        self.assertNotIn("TEST fires", traces)
+        self.assertIn("CAM-B", traces["Confirmed fires"])
+
+    def test_camera_login_map_shows_only_own_camera(self):
+        traces = self.traces(self.cam_a)
+        everything = " ".join(traces.values())
+        self.assertIn("Camera CAM-A", everything)
+        self.assertNotIn("Camera CAM-B", everything)
+        self.assertIn("CAM-A", traces["Needs review"])
+        self.assertNotIn("CAM-B", traces["Needs review"])
+        self.assertNotIn("TEST fires", traces)
+
+    def test_admin_map_shows_test_fires(self):
+        traces = self.traces(self.admin)
+        self.assertIn("TEST fires", traces)
+        self.assertIn("CAM-B", traces["Needs review"])
+
+    def test_avoidance_includes_test_fires_only_for_admin(self):
+        fd, auth = sys.modules["fire_data"], sys.modules["auth"]
+        public = fd.get_avoid_geojson(auth.ANONYMOUS)
+        camera = fd.get_avoid_geojson(auth.Viewer(camera_ids=frozenset({"CAM-A"})))
+        admin = fd.get_avoid_geojson(auth.Viewer(is_admin=True))
+        self.assertEqual(public, camera)
+        self.assertNotEqual(public, admin)  # admin also avoids the confirmed test fire at (45, -70)
+        self.assertIsNotNone(public)        # the real confirmed fire is avoided by everyone
+
+    def test_dashboard_header_and_sections(self):
+        anon = self.anon.get("/").text
+        self.assertIn('href="/login"', anon)
+        self.assertNotIn("Camera network", anon)
+        self.assertNotIn("Awaiting owner review", anon)
+        mine = self.cam_a.get("/").text
+        self.assertIn("Sign out", mine)
+        self.assertIn("Camera network", mine)
+        self.assertIn("CAM-A", mine)
+        self.assertNotIn('href="/admin"', mine)
+        self.assertIn('href="/admin"', self.admin.get("/").text)

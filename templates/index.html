@@ -39,6 +39,10 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
 .icon-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:36px;padding:0 10px;color:#f3f4f6;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.17);border-radius:8px;font-size:11px;font-weight:600;white-space:nowrap}
 .icon-button:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)}
 .icon-button svg{width:15px;height:15px}
+.signed-in{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d1d5db;font-size:11px;font-weight:600}
+.inline-form{margin:0}
+a.icon-button{text-decoration:none}
+.metrics-grid.metrics-public{grid-template-columns:minmax(0,1fr)}
 .avatar{display:grid;place-items:center;height:34px;width:34px;border-radius:50%;color:#fff;background:#3b3b3b;border:1px solid rgba(255,255,255,.2);font-size:10px;font-weight:700}
 .panel{position:fixed;z-index:20;background:rgba(24,25,24,.84);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.18);border-radius:var(--radius);box-shadow:var(--shadow);color:#f8fafc}
 .sidebar{top:calc(var(--header-height) + 14px);left:16px;bottom:16px;width:310px;display:flex;flex-direction:column;overflow:hidden}
@@ -196,7 +200,13 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
    <span class="header-action-label">Fit map</span>
   </button>
 
-  <div class="avatar" aria-label="Firewatch operator">FW</div>
+  {% if viewer.is_anonymous %}
+  <a class="icon-button" href="/login" title="Sign in to see your cameras">Sign in</a>
+  {% else %}
+  {% if viewer.is_admin %}<a class="icon-button" href="/admin">Admin</a>{% endif %}
+  <span class="signed-in" title="Signed in">{% if viewer.is_admin %}Admin{% else %}{{ viewer.camera_ids | sort | join(", ") }}{% endif %}</span>
+  <form class="inline-form" method="post" action="/logout"><button class="icon-button" type="submit">Sign out</button></form>
+  {% endif %}
  </div>
 </header>
 
@@ -206,12 +216,13 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
  <div class="panel-heading">
   <div>
    <h2>Monitoring overview</h2>
-   <p>Camera network and wildfire activity</p>
+   <p>{% if viewer.is_anonymous %}Confirmed wildfire activity{% else %}Camera network and wildfire activity{% endif %}</p>
   </div>
   <span class="refresh-time" id="last-update">Loading</span>
  </div>
 
- <div class="metrics-grid">
+ <div class="metrics-grid{% if viewer.is_anonymous %} metrics-public{% endif %}">
+  {% if not viewer.is_anonymous %}
   <div class="metric-card">
    <div class="metric-top">
     <span class="metric-icon">
@@ -231,6 +242,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
    <strong class="metric-number" id="metric-unconfirmed">{{ stats.unconfirmed | default(0) }}</strong>
    <span class="metric-label">Awaiting owner review</span>
   </div>
+  {% endif %}
 
   <div class="metric-card">
    <div class="metric-top">
@@ -244,6 +256,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
  </div>
 
  <div class="sidebar-content">
+  {% if not viewer.is_anonymous %}
   <div class="section-header">
    <h3>Camera network</h3>
    <span class="section-count" id="camera-count">{{ stats.online | default(0) }} online</span>
@@ -268,9 +281,10 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
    <div class="empty-state">No cameras have been registered yet. Register a fixed-location camera through the camera administration API to show it here.</div>
   {% endif %}
   </div>
+  {% endif %}
 
   <div class="section-header">
-   <h3>Confirmed camera fires</h3>
+   <h3>{% if viewer.is_anonymous %}Confirmed camera fires{% else %}Camera detections{% endif %}</h3>
    <span class="section-count" id="event-count">Loading</span>
   </div>
 
@@ -636,23 +650,26 @@ async function refreshPanels() {
         const cameras = cameraPayload.cameras || [];
         const events = eventPayload.events || [];
 
-        byId("metric-cameras").textContent = cameras.filter(
+        // The camera metrics and list only exist for signed-in viewers.
+        const setText = (id, value) => { const el = byId(id); if (el) el.textContent = value; };
+
+        setText("metric-cameras", cameras.filter(
             camera =>
                 camera.enabled !== 0 &&
                 camera.enabled !== false &&
                 camera.status !== "disabled"
-        ).length;
+        ).length);
 
-        byId("camera-count").textContent =
+        setText("camera-count",
             cameras.filter(camera => camera.status === "online").length +
-            " online";
+            " online");
 
         // Public API only returns confirmed events; totals come from server-side counts.
         const counts = eventPayload.counts || {};
-        byId("metric-unconfirmed").textContent = counts.pending_review ?? 0;
+        setText("metric-unconfirmed", counts.pending_review ?? 0);
         byId("metric-confirmed").textContent = counts.confirmed ?? events.length;
 
-        byId("cameras-list").innerHTML = cameras.length
+        if (byId("cameras-list")) byId("cameras-list").innerHTML = cameras.length
             ? cameras.map(camera => {
                 const state = camera.status || "unknown";
                 const color = STATUS_COLORS[state] || STATUS_COLORS.unknown;
@@ -701,6 +718,12 @@ async function refreshPanels() {
                     ? `<a class="evidence-thumb" href="/${escapeHtml(event.image)}" target="_blank" rel="noopener"><img src="/${escapeHtml(event.image)}" alt="Heat image from ${escapeHtml(event.camera_id || "camera")}" loading="lazy"></a>`
                     : "";
 
+                const reviewLink = state === "unconfirmed"
+                    ? `<a class="evidence-link" href="/review/${encodeURIComponent(event.event_id)}">Review this detection</a>`
+                    : "";
+
+                const testBadge = event.is_test ? "TEST · " : "";
+
                 const videoLink = event.video
                     ? `<a class="evidence-link" href="/${escapeHtml(event.video)}" target="_blank" rel="noopener">Open event video</a>`
                     : "";
@@ -709,7 +732,7 @@ async function refreshPanels() {
                     <div class="entry">
                         <div class="entry-top">
                             <span class="status-dot" style="background:${color}"></span>
-                            <strong>${escapeHtml(
+                            <strong>${testBadge}${escapeHtml(
                                 event.camera_id || "Camera"
                             )} · ${escapeHtml(
                                 event.magnitude || "Unknown"
@@ -727,6 +750,7 @@ async function refreshPanels() {
                             ${escapeHtml(event.timestamp || "")}
                         </div>
                         ${imageLink}
+                        ${reviewLink}
                         ${videoLink}
                     </div>
                 `;

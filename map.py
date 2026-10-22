@@ -7,14 +7,14 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app import app
-from database import get_connection
-from device_api import PUBLIC_STATUSES
-from fire_data import get_last_updated, get_satellite_status, load_fires
+from auth import Viewer, get_viewer
+from database import TEST_CAMERA_ID, get_connection
+from fire_data import fires_for, get_last_updated, get_satellite_status
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -35,19 +35,24 @@ FIRE_STYLE = {
 }
 
 
-def _camera_rows():
-    """Read fixed camera locations and derive a user-friendly connectivity status."""
+def _camera_rows(viewer):
+    """Fixed camera locations the viewer may see, with a user-friendly connectivity status."""
+    if viewer.is_anonymous:
+        return []
     with get_connection() as conn:
         rows = conn.execute(
             """SELECT camera_id, name, latitude, longitude, enabled, status,
                       last_seen_at, last_heartbeat_at, software_version
-               FROM cameras ORDER BY camera_id"""
+               FROM cameras WHERE camera_id <> ? ORDER BY camera_id""",
+            (TEST_CAMERA_ID,),
         ).fetchall()
 
     now = datetime.now(timezone.utc)
     cameras = []
 
     for row in rows:
+        if not viewer.can_see_camera(row["camera_id"]):
+            continue
         camera = dict(row)
 
         if not camera.get("enabled"):
@@ -102,9 +107,9 @@ def _numeric(data, column, default=0.0):
     ).fillna(default)
 
 
-def build_map_figure():
-    """Build a Carto light basemap with reported, satellite, and camera fires."""
-    raw = load_fires()
+def build_map_figure(viewer):
+    """Build a Carto light basemap with the reported, satellite and camera fires this viewer may see."""
+    raw = fires_for(viewer)
 
     if raw is None or raw.empty:
         data = pd.DataFrame(
@@ -150,7 +155,7 @@ def build_map_figure():
             & data["longitude"].between(-180, 180)
         ]
 
-    cameras = _camera_rows()
+    cameras = _camera_rows(viewer)
 
     camera_points = [
         (camera["latitude"], camera["longitude"])
@@ -244,11 +249,29 @@ def build_map_figure():
                 )
             )
 
-        # Raspberry Pi fire events. Only ones a reviewer confirmed are public;
-        # unreviewed detections and false alarms stay off the community map.
+        # Raspberry Pi fire events, already limited to what this viewer may see (fires_for):
+        # the public only gets confirmed fires; test fires (admins only) get their own layer.
         device = data[sources == "device"]
-        if not device.empty and "status" in device.columns:
-            device = device[device["status"].isin(PUBLIC_STATUSES)]
+        test_mask = _numeric(device, "is_test") == 1
+        test_fires, device = device[test_mask], device[~test_mask]
+        if not test_fires.empty:
+            fig.add_trace(
+                go.Scattermap(
+                    lat=test_fires["latitude"],
+                    lon=test_fires["longitude"],
+                    mode="markers",
+                    marker={"size": _numeric(test_fires, "mag", 1) * 3 + 9, "color": "#7c3aed", "opacity": 0.95},
+                    text=[
+                        f"<b>TEST · {status}</b><br>Camera: {camera_id}<br>Severity: {level}"
+                        for status, camera_id, level in zip(
+                            test_fires["status"].fillna(""), test_fires["camera_id"].fillna(""),
+                            test_fires["magnitude"].fillna("Unknown"),
+                        )
+                    ],
+                    hovertemplate="%{text}<extra></extra>",
+                    name="TEST fires",
+                )
+            )
 
         if not device.empty:
             device_status = device.get(
@@ -407,8 +430,8 @@ def health_check():
 
 
 @app.get("/api/map-figure")
-def map_figure():
-    fig, _, _ = build_map_figure()
+def map_figure(viewer: Viewer = Depends(get_viewer)):
+    fig, _, _ = build_map_figure(viewer)
 
     return JSONResponse(
         content=json.loads(pio.to_json(fig, validate=True))
@@ -431,8 +454,8 @@ def satellite_status():
 
 
 @app.get("/", response_class=HTMLResponse)
-def firewatch(request: Request):
-    fig, cameras, data = build_map_figure()
+def firewatch(request: Request, viewer: Viewer = Depends(get_viewer)):
+    fig, cameras, data = build_map_figure(viewer)
 
     graph_html = pio.to_html(
         fig,
@@ -451,7 +474,7 @@ def firewatch(request: Request):
         pd.Series("unconfirmed", index=data.index),
     )
 
-    device = source == "device"
+    device = (source == "device") & (_numeric(data, "is_test") == 0)
 
     stats = {
         "cameras": sum(
@@ -480,6 +503,7 @@ def firewatch(request: Request):
             "graph_html": graph_html,
             "stats": stats,
             "cameras": cameras,
+            "viewer": viewer,
         },
     )
 

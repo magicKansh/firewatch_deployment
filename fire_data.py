@@ -5,24 +5,25 @@ import pandas as pd
 import requests
 from shapely.geometry import Point, mapping
 from shapely.ops import unary_union
-from database import get_connection, init_db
+from auth import ANONYMOUS
+from database import PUBLIC_STATUSES, get_connection, init_db
 
 FIRMS_API_KEY = os.getenv("FIRMS_API_KEY")
 FIRMS_BBOX = os.getenv("FIRMS_BBOX", "").strip()
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
-_cache = {"data": None, "avoid_geojson": None, "timestamp": 0}
+_cache = {"data": None, "avoid_geojson": {}, "timestamp": 0}
 CACHE_TTL_SECONDS = 15
 
 
 def invalidate_cache():
     _cache["data"] = None
-    _cache["avoid_geojson"] = None
+    _cache["avoid_geojson"] = {}
     _cache["timestamp"] = 0
 
 
 def _empty():
-    return pd.DataFrame(columns=["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index"])
+    return pd.DataFrame(columns=["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index","is_test"])
 
 
 def _load_reported_fires():
@@ -52,7 +53,7 @@ def _load_device_fires():
     data["mag"] = data["severity_index"].clip(lower=0.5, upper=5)
     data["place"] = data["place"].fillna("Raspberry Pi camera")
     data["source"] = "device"
-    return data[["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index"]]
+    return data[["latitude","longitude","mag","place","source","event_id","camera_id","status","magnitude","fire_size_percent","duration_seconds","max_temperature_c","timestamp","image","video","visual_fire_score","detection_method","severity_index","is_test"]]
 
 
 def _load_satellite_fires(reported_df):
@@ -116,16 +117,34 @@ def load_fires(use_cache=True):
     combined["mag"] = pd.to_numeric(combined["mag"], errors="coerce")
     combined = combined.dropna(subset=["latitude","longitude"])
     _cache["data"] = combined
-    _cache["avoid_geojson"] = None
+    _cache["avoid_geojson"] = {}
     _cache["timestamp"] = now
     return combined
 
 
-def get_avoid_geojson():
+def fires_for(viewer):
+    """All fires this viewer may see: public layers, confirmed real camera fires, their own
+    cameras' other events, and (admins only) test fires."""
     data = load_fires()
-    if _cache["avoid_geojson"] is not None:
-        return _cache["avoid_geojson"]
-    # Only confirmed camera detections are automatically treated as device hazards.
+    if data.empty or "is_test" not in data.columns:
+        return data
+    device = data["source"] == "device"
+    is_test = pd.to_numeric(data["is_test"], errors="coerce").fillna(0).astype(int) == 1
+    public = data["status"].isin(PUBLIC_STATUSES)
+    own = data["camera_id"].map(lambda camera_id: isinstance(camera_id, str) and viewer.can_see_camera(camera_id))
+    visible = ~device | (~is_test & (public | own)) | (is_test & viewer.sees_tests)
+    return data[visible]
+
+
+def get_avoid_geojson(viewer=ANONYMOUS):
+    """Route-avoidance polygons: reported, satellite and confirmed camera fires.
+
+    Admins also avoid confirmed test fires, so they can test routing without affecting anyone else.
+    """
+    data = fires_for(viewer)
+    key = viewer.sees_tests
+    if key in _cache["avoid_geojson"]:
+        return _cache["avoid_geojson"][key]
     # The combined frame may contain only satellite or only reported rows, so `status`
     # is not guaranteed to exist until at least one device event has been loaded.
     if data.empty:
@@ -139,11 +158,8 @@ def get_avoid_geojson():
         reported_and_satellite = data[source.isin(["reported", "satellite"])]
         hazards = pd.concat([reported_and_satellite, device_confirmed], ignore_index=True)
     polygons = [Point(row["longitude"], row["latitude"]).buffer(.01) for _, row in hazards.iterrows()]
-    if not polygons:
-        _cache["avoid_geojson"] = None
-        return None
-    _cache["avoid_geojson"] = mapping(unary_union(polygons))
-    return _cache["avoid_geojson"]
+    _cache["avoid_geojson"][key] = mapping(unary_union(polygons)) if polygons else None
+    return _cache["avoid_geojson"][key]
 
 
 def get_last_updated():
