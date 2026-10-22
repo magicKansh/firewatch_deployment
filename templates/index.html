@@ -68,6 +68,8 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
 .entry-details{margin:5px 0 0 14px;color:#d1d5db;font-size:10px;line-height:1.6;overflow-wrap:anywhere}
 .evidence-link{display:inline-block;margin:6px 0 0 14px;color:#fb7045;font-size:10px;text-decoration:none;font-weight:600}
 .evidence-link:hover{text-decoration:underline}
+.evidence-thumb{display:block;margin:7px 0 0 14px}
+.evidence-thumb img{display:block;width:100%;max-width:240px;border-radius:7px;border:1px solid rgba(255,255,255,.15)}
 .empty-state{padding:12px 10px;color:#e5e7eb;background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.22);border-radius:8px;font-size:11px;line-height:1.6}
 .sidebar-footer{padding:11px 14px;border-top:1px solid rgba(255,255,255,.13);color:#d1d5db;font-size:10px;line-height:1.5}
 .navigation{top:calc(var(--header-height) + 14px);right:16px;bottom:16px;width:360px;max-height:calc(100vh - var(--header-height) - 30px);display:flex;flex-direction:column;overflow:hidden}
@@ -227,7 +229,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
     </span>
    </div>
    <strong class="metric-number" id="metric-unconfirmed">{{ stats.unconfirmed | default(0) }}</strong>
-   <span class="metric-label">Needs review</span>
+   <span class="metric-label">Awaiting owner review</span>
   </div>
 
   <div class="metric-card">
@@ -268,7 +270,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
   </div>
 
   <div class="section-header">
-   <h3>Recent detections</h3>
+   <h3>Confirmed camera fires</h3>
    <span class="section-count" id="event-count">Loading</span>
   </div>
 
@@ -278,8 +280,9 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
  </div>
 
  <div class="sidebar-footer">
-  Camera detections begin as unconfirmed events. Confirmed camera fires and
-  available public fire detections may affect route planning. Always verify
+  Camera detections appear here only after the camera owner reviews the heat
+  image and confirms a fire. Confirmed fires and public satellite detections
+  affect route planning. Always verify
   a hazard before making safety-critical decisions.
  </div>
 </aside>
@@ -391,7 +394,6 @@ button:focus-visible,input:focus-visible{outline:2px solid #fb7045;outline-offse
 <div class="map-legend">
  <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>Camera online</span>
  <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>Camera stale</span>
- <span class="legend-item"><span class="legend-dot" style="background:#ca8a04"></span>Needs review</span>
  <span class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>Confirmed fire</span>
  <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span>Satellite detection</span>
 </div>
@@ -645,13 +647,10 @@ async function refreshPanels() {
             cameras.filter(camera => camera.status === "online").length +
             " online";
 
-        byId("metric-unconfirmed").textContent = events.filter(
-            event => event.status === "unconfirmed"
-        ).length;
-
-        byId("metric-confirmed").textContent = events.filter(
-            event => event.status === "confirmed"
-        ).length;
+        // Public API only returns confirmed events; totals come from server-side counts.
+        const counts = eventPayload.counts || {};
+        byId("metric-unconfirmed").textContent = counts.pending_review ?? 0;
+        byId("metric-confirmed").textContent = counts.confirmed ?? events.length;
 
         byId("cameras-list").innerHTML = cameras.length
             ? cameras.map(camera => {
@@ -699,7 +698,7 @@ async function refreshPanels() {
                 const color = STATUS_COLORS[state] || STATUS_COLORS.unknown;
 
                 const imageLink = event.image
-                    ? `<a class="evidence-link" href="/${escapeHtml(event.image)}" target="_blank" rel="noopener">View snapshot</a>`
+                    ? `<a class="evidence-thumb" href="/${escapeHtml(event.image)}" target="_blank" rel="noopener"><img src="/${escapeHtml(event.image)}" alt="Heat image from ${escapeHtml(event.camera_id || "camera")}" loading="lazy"></a>`
                     : "";
 
                 const videoLink = event.video
@@ -732,7 +731,7 @@ async function refreshPanels() {
                     </div>
                 `;
             }).join("")
-            : '<div class="empty-state">No detections have been received. The map is ready for registered camera events and available public fire data.</div>';
+            : '<div class="empty-state">No confirmed camera fires. Detections show up here once a camera owner reviews and confirms them.</div>';
 
         byId("event-count").textContent =
             events.length + (events.length === 1 ? " event" : " events");

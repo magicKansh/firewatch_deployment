@@ -1,6 +1,6 @@
 # Firewatch Distributed Camera System
 
-Firewatch is a prototype distributed wildfire-monitoring and route-avoidance system. Each Raspberry Pi uses an MLX90640 thermal sensor plus a Pi Camera video stream. Persistent thermal or warm/flickering video clues create an unconfirmed event; the Pi uploads a snapshot and a short MP4 clip when recording succeeds. The video rule is a lightweight heuristic, not a trained fire-classification model, so human confirmation remains important.
+Firewatch is a prototype distributed wildfire-monitoring and route-avoidance system. Each Raspberry Pi uses an MLX90640 thermal sensor, with an optional Pi Camera. Persistent thermal or warm/flickering video clues create an unconfirmed event; the Pi uploads a snapshot and a short MP4 clip when recording succeeds. The video rule is a lightweight heuristic, not a trained fire-classification model, so human confirmation remains important.
 
 ## Architecture
 
@@ -94,50 +94,46 @@ Email can be added with `--email`.
 
 ## Raspberry Pi setup
 
-On Raspberry Pi OS, install system camera/video packages first so Picamera2 uses the OS-provided libcamera stack:
+Hardware: Raspberry Pi 5 + Adafruit MLX90640 (55°) on I2C (3V3, GND, SDA = GPIO2, SCL = GPIO3). A Pi Camera is **optional**: without one the node runs thermal-only, and with one it also attaches a visible photo, a short clip and a colour heuristic.
+
+On the Pi, from a clone of this repository:
 
 ```bash
-sudo apt update
-sudo apt install -y python3-picamera2 python3-numpy python3-pil python3-venv ffmpeg
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-pip install -r requirements-pi.txt
-cp camera_config.json.example camera_config.json
+sudo ./pi/install.sh
 ```
 
-Edit `camera_config.json` with the generated `camera_key` and the camera's fixed registered coordinates. The server's registered coordinates are authoritative; the Pi does not need a GPS receiver.
+The script installs the packages, enables I2C at 1 MHz, creates a `firewatch` service user, copies the node to `/opt/firewatch`, and installs the `firewatch-node` systemd service. The service starts on boot and restarts if it crashes. Then:
 
-Then run (replace the address with your deployed Render URL):
+1. Put the camera ID and key from `manage.py add-camera` (or the admin API) into `/etc/firewatch/camera_config.json`.
+2. Set `FIREWATCH_SERVER_URL` in `/etc/firewatch/node.env`. Detection tuning also lives there.
+3. Reboot if the script asks you to, then check that the sensor is found with `i2cdetect -y 1` (it shows `33`).
+4. Watch it run: `journalctl -u firewatch-node -f`.
 
-```bash
-export FIREWATCH_SERVER_URL="https://your-service.onrender.com"
-python sensor_monitor.py
-```
+To update later, run `git pull && sudo ./pi/install.sh`.
 
-The Pi samples video frames and the thermal sensor. On a persistent candidate, it records an approximately 6-second MP4 clip and snapshot, then uploads both to `/api/camera-event`. Tune `VISUAL_FIRE_THRESHOLD`, `VISUAL_REQUIRED_FRAMES`, and `FIREWATCH_CLIP_SECONDS` for the installation. Install/configure a real trained fire-detection model and validate it on representative data before relying on video-only decisions in the field.
+### What the node does
 
-The Pi sends a heartbeat about every 30 seconds. The thermal detector uses:
+- **Watches continuously.** It reads the thermal frame 4 times a second. A pixel is hot when it is at least `HOT_TEMP_C` and at least `AMBIENT_DELTA_C` above the scene background. A detection needs a connected hot cluster of `MIN_CLUSTER_PIXELS` that persists for `REQUIRED_FRAMES` frames.
+- **Takes a snapshot every minute.** Each `SNAPSHOT_SECONDS` it saves a heat-map snapshot to RAM (`/dev/shm/firewatch`). Only the newest `SNAPSHOT_KEEP` are kept; older ones are deleted, and nothing is written to the SD card.
+- **Builds the alert image on detection.** It renders a heat-signature image with the hotspot boxed. It attaches the last `CONTEXT_SNAPSHOTS` minute snapshots as "before" images, plus the photo and clip when a Pi Camera is present. Then it uploads everything.
+- **Queues events when offline.** If the server can't be reached, the event goes to `/var/lib/firewatch/outbox` and is retried every minute. Events the server rejects (for example, a wrong camera key) are logged and dropped rather than retried forever.
+- **Updates ongoing events.** While the heat persists, it sends an updated image every `EVENT_UPDATE_SECONDS`. The server adds these to the same event, so no new alert goes out.
+- **Restarts on sensor failure.** If the sensor stops answering, the node exits and systemd restarts it. If the sensor is really gone, heartbeats stop and the dashboard shows the camera as offline.
 
-- absolute temperature threshold (`HOT_TEMP_C`)
-- temperature above local background (`AMBIENT_DELTA_C`)
-- minimum hot area (`MIN_HOT_PERCENT`)
-- minimum connected hot cluster (`MIN_CLUSTER_PIXELS`)
-- persistent detections (`REQUIRED_FRAMES`)
+**Tuning tip:** the MLX90640 has 32×24 pixels across 55°. At 30 m one pixel covers about 0.9 m, so a small, distant fire is only a few pixels. Tune `MIN_CLUSTER_PIXELS` and `HOT_TEMP_C` for your view, and use `THERMAL_FLIP_H` / `THERMAL_FLIP_V` if the image is mirrored.
 
-These values are intentionally configurable because installation, weather, distance, optics, and sensor calibration affect the readings.
+## Review flow and the community dashboard
 
-## Confirmation flow
+1. The Pi detects persistent heat and uploads the heat-signature image.
+2. The server creates an `unconfirmed` event. This event is **not public**.
+3. Subscribers get an SMS (sent as MMS with the image when Twilio allows it) and/or an email with the image attached. Each message links to `/review/{event_id}?token=…`.
+4. The review page shows the heat image, the earlier snapshots and the readings. The reviewer picks **"Yes, it's a fire"** or **"No, it's something else"**. For "something else", they also say what it was (sun or reflection, vehicle, chimney/grill, controlled burn, person/animal, other) and can add a private note.
+5. **Yes** marks the event `confirmed`. It then appears on the community map and in the sidebar, and route planning avoids it. **No** marks it `false_alarm` and keeps it private.
+6. **No repeat alerts for a dismissed spot.** For `FALSE_ALARM_COOLDOWN_SECONDS` after a dismissed spot was last seen, new detections within `FALSE_ALARM_RADIUS_PX` of it are logged quietly instead of re-alerting. This stops repeat alerts from a chimney or sun glare. A different spot, or the same spot getting `FALSE_ALARM_TEMP_MARGIN_C` hotter, still alerts.
 
-1. Pi detects persistent thermal heat or a persistent video-frame heuristic signal.
-2. Pi captures a snapshot and attempts a short MP4 clip.
-3. Server authenticates the camera and uses its registered coordinates.
-4. Server creates an `unconfirmed` event.
-5. SMS/email is sent with confirmation links.
-6. Recipient selects **CONFIRM** or **FALSE ALARM**.
-7. The token is consumed and the event becomes `confirmed` or `false_alarm`.
-8. Confirmed device events are used for route avoidance.
+**Links are safe to open.** Opening the review link never changes anything; only pressing a button does. Email security scanners open links automatically, so this matters. Old `/confirm/...` links now open the review page. Each link works once and expires after `CONFIRMATION_TOKEN_TTL_HOURS`. Admins can review any event with `POST /api/admin/events/{event_id}/review`, for example when an alert was missed.
 
-Repeated reports from the same camera within `EVENT_DEDUPE_SECONDS` update the existing event and do not send another initial alert.
+The public `GET /api/device-events` returns only confirmed fires, plus counts of how many are pending review. With the admin bearer token it returns every status.
 
 ## Admin API
 
@@ -156,7 +152,8 @@ Endpoints:
 - `GET /api/admin/subscribers`
 - `POST /api/admin/subscribers`
 - `GET /api/cameras/status`
-- `GET /api/device-events`
+- `GET /api/device-events` (all statuses with the admin token; public callers only see confirmed fires)
+- `POST /api/admin/events/{event_id}/review` with `{"decision": "fire" | "not_fire", "label": "sun_glare", "note": ""}`
 
 ## Important production notes
 
@@ -174,3 +171,12 @@ See `README_RENDER.md` for the Render setup. The important distinction is that R
 ## Dashboard navigation and satellite monitoring
 
 The top-right panel supports driving, biking, and walking routes with turn-by-turn instructions. Route avoidance uses available reported/satellite detections and confirmed camera fires; unconfirmed camera events stay visible for review and are not automatically treated as confirmed device hazards. The panel also exposes the NASA FIRMS active-fire layer. Set `FIRMS_API_KEY` to enable active-fire satellite detections, and optionally `FIRMS_BBOX=west,south,east,north` to monitor a fixed bounding box instead of the camera footprint.
+
+## Tests
+
+```bash
+pip install -r requirements.txt pytest httpx pillow numpy
+pytest
+```
+
+`tests/test_node.py` exercises the Pi node with a simulated sensor and server. `tests/test_server.py` covers the full detection → review → dashboard flow. Both run on every push through GitHub Actions.

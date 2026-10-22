@@ -1,0 +1,25 @@
+[Unit]
+Description=Firewatch thermal camera node (MLX90640)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=firewatch
+Group=firewatch
+WorkingDirectory=/opt/firewatch
+# Defaults; anything set in /etc/firewatch/node.env overrides these.
+Environment=PYTHONUNBUFFERED=1
+Environment=FIREWATCH_CAMERA_CONFIG=/etc/firewatch/camera_config.json
+Environment=FIREWATCH_OUTBOX_DIR=/var/lib/firewatch/outbox
+Environment=FIREWATCH_SNAPSHOT_DIR=/dev/shm/firewatch
+EnvironmentFile=/etc/firewatch/node.env
+ExecStart=/opt/firewatch/.venv/bin/python /opt/firewatch/sensor_monitor.py
+Restart=always
+RestartSec=10
+StateDirectory=firewatch
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

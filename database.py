@@ -9,6 +9,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = Path(os.getenv("FIREWATCH_DB", DATA_DIR / "firewatch.db"))
+IMAGE_DIR = Path(os.getenv("FIREWATCH_IMAGE_DIR", BASE_DIR / "images"))
 
 
 def utc_now():
@@ -144,6 +145,15 @@ def init_db():
                 "video": "TEXT NOT NULL DEFAULT ''",
                 "visual_fire_score": "REAL NOT NULL DEFAULT 0",
                 "detection_method": "TEXT NOT NULL DEFAULT 'thermal'",
+                # Review flow (heat-signature photo review by the camera owner).
+                "context_images": "TEXT NOT NULL DEFAULT '[]'",
+                "hotspot_x": "REAL",
+                "hotspot_y": "REAL",
+                "review_label": "TEXT NOT NULL DEFAULT ''",
+                "review_note": "TEXT NOT NULL DEFAULT ''",
+                "reviewed_at": "TEXT",
+                "reviewed_by": "TEXT NOT NULL DEFAULT ''",
+                "suppressed_count": "INTEGER NOT NULL DEFAULT 0",
             },
         }
         for table, columns in migrations.items():

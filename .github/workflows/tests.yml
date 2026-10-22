@@ -1,0 +1,20 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest httpx pillow numpy
+      - name: pytest
+        shell: bash
+        run: |
+          set +e
+          pytest -q -rfE --tb=short 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          # Surface each failure as an annotation (visible on the run and on pull requests).
+          grep -E '^(FAILED|ERROR) ' pytest.log | sed 's/^/::error::/'
+          exit $status
