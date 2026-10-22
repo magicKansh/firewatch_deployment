@@ -20,6 +20,19 @@ def add_subscriber(args):
     print("Subscriber added.")
 
 
+def set_camera_password(args):
+    init_db()
+    from camera_api import reset_login_password
+    with get_connection() as conn:
+        try:
+            password = reset_login_password(conn, args.camera_id)
+        except KeyError:
+            raise SystemExit(f"Unknown camera: {args.camera_id}")
+    print(f"Login password for {args.camera_id}: {password}\n"
+          "Give it to the people who look after this camera; it is not shown again. "
+          "Anyone signed in with the old password has been signed out.")
+
+
 def list_cameras(_):
     with get_connection() as conn: rows = conn.execute("SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,software_version FROM cameras ORDER BY camera_id").fetchall()
     for r in rows: print(dict(r))
@@ -33,6 +46,7 @@ parser = argparse.ArgumentParser(description="Firewatch database administration"
 sub = parser.add_subparsers(dest="command", required=True)
 p = sub.add_parser("add-camera"); p.add_argument("camera_id"); p.add_argument("latitude", type=float); p.add_argument("longitude", type=float); p.add_argument("--name"); p.add_argument("--camera-key"); p.set_defaults(func=add_camera)
 p = sub.add_parser("add-subscriber"); p.add_argument("camera_id"); p.add_argument("--phone"); p.add_argument("--email"); p.add_argument("--sms", action=argparse.BooleanOptionalAction, default=True); p.add_argument("--email-enabled", action=argparse.BooleanOptionalAction, default=True); p.set_defaults(func=add_subscriber)
+p = sub.add_parser("set-camera-password"); p.add_argument("camera_id"); p.set_defaults(func=set_camera_password)
 p = sub.add_parser("list-cameras"); p.set_defaults(func=list_cameras)
 p = sub.add_parser("list-subscribers"); p.set_defaults(func=list_subscribers)
 args = parser.parse_args(); args.func(args)

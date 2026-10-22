@@ -25,6 +25,8 @@ app.mount("/images", StaticFiles(directory=image_dir), name="images")
 from device_api import router as device_router
 from camera_api import router as camera_router
 from auth import router as auth_router
+from admin_panel import router as admin_router
 app.include_router(device_router)
 app.include_router(camera_router)
 app.include_router(auth_router)
+app.include_router(admin_router)

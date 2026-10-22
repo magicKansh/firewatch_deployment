@@ -61,6 +61,9 @@ class ServerTestCase(unittest.TestCase):
             self.keys[camera_id] = r.json()["camera_key"]
         r = self.client.post("/api/admin/subscribers", headers=ADMIN, json={"camera_id": "*", "phone": "+15555550123"})
         self.assertEqual(r.status_code, 200, r.text)
+        with self.db() as conn:
+            # Start like cameras registered before logins existed: no login until an admin sets one.
+            conn.execute("UPDATE cameras SET login_password_hash=NULL")
 
     def new_client(self):
         # https so the Secure session cookie is sent back.

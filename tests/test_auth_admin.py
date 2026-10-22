@@ -1,10 +1,12 @@
 """Camera logins, per-viewer visibility and the admin control panel."""
 import os
+import re
+import subprocess
 import sys
 
 from fastapi.testclient import TestClient
 
-from tests.support import ServerTestCase, reload_app
+from tests.support import ADMIN, ROOT, ServerTestCase, reload_app
 
 
 class AuthCoreTests(ServerTestCase):
@@ -301,3 +303,98 @@ class SessionReviewTests(ServerTestCase):
         token = self.token_from_last_sms()
         self.new_client().post(f"/review/{event_id}", data={"token": token, "decision": "not_fire", "label": "vehicle"})
         self.assertEqual(self.status_of(event_id), ("false_alarm", "review-link"))
+
+
+class AdminCameraTests(ServerTestCase):
+    def admin_client(self):
+        client = self.new_client()
+        self.login_admin(client)
+        return client
+
+    def test_admin_pages_require_admin(self):
+        r = self.new_client().get("/admin", follow_redirects=False)
+        self.assertEqual((r.status_code, r.headers["location"]), (303, "/admin/login"))
+        cam = self.new_client()
+        self.login_camera(cam, "CAM-A", self.set_login_password("CAM-A"))
+        self.assertEqual(cam.get("/admin", follow_redirects=False).status_code, 303)
+        r = self.new_client().post("/admin/cameras/CAM-A/login-password", follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self.admin_client().get("/admin").status_code, 200)
+
+    def test_camera_table_lists_cameras_and_login_state(self):
+        self.set_login_password("CAM-A")
+        page = self.admin_client().get("/admin").text
+        self.assertIn("Alpha Ridge", page)
+        self.assertIn("Bravo Hill", page)
+        self.assertRegex(page, r'data-camera="CAM-A"[^>]*data-login="yes"')
+        self.assertRegex(page, r'data-camera="CAM-B"[^>]*data-login="no"')
+
+    def test_add_camera_shows_both_secrets_once(self):
+        admin = self.admin_client()
+        page = admin.post("/admin/cameras", data={"camera_id": "CAM-C", "name": "Cedar",
+                                                  "latitude": "40", "longitude": "-75"}).text
+        with self.db() as conn:
+            row = conn.execute("SELECT camera_key, login_password_hash FROM cameras WHERE camera_id='CAM-C'").fetchone()
+        pw = re.search(r'data-secret="login">([^<]+)<', page).group(1)
+        key = re.search(r'data-secret="pi_key">([^<]+)<', page).group(1)
+        self.assertTrue(sys.modules["auth"].verify_password(pw, row["login_password_hash"]))
+        self.assertTrue(sys.modules["database"].camera_key_matches(row["camera_key"], key))
+        self.assertNotIn(pw, admin.get("/admin").text)
+
+    def test_add_camera_rejects_bad_input(self):
+        admin = self.admin_client()
+        for data in ({"camera_id": "CAM-A"}, {"latitude": "123"}, {"camera_id": "__test__"}, {"camera_id": " "}):
+            form = {"camera_id": "CAM-D", "name": "D", "latitude": "40", "longitude": "-75", **data}
+            self.assertEqual(admin.post("/admin/cameras", data=form).status_code, 400, data)
+
+    def test_reset_password_signs_camera_out(self):
+        old = self.set_login_password("CAM-A")
+        user = self.new_client()
+        self.login_camera(user, "CAM-A", old)
+        page = self.admin_client().post("/admin/cameras/CAM-A/login-password").text
+        new = re.search(r'data-secret="login">([^<]+)<', page).group(1)
+        self.assertEqual(user.get("/api/cameras/status").json()["cameras"], [])
+        self.assertEqual(self.login_camera(self.new_client(), "CAM-A", old).status_code, 401)
+        self.assertEqual(self.login_camera(self.new_client(), "CAM-A", new).status_code, 303)
+
+    def test_reset_pi_key_keeps_logins(self):
+        pw = self.set_login_password("CAM-A")
+        user = self.new_client()
+        self.login_camera(user, "CAM-A", pw)
+        page = self.admin_client().post("/admin/cameras/CAM-A/pi-key").text
+        key = re.search(r'data-secret="pi_key">([^<]+)<', page).group(1)
+        self.assertEqual(len(user.get("/api/cameras/status").json()["cameras"]), 1)
+        r = self.client.post("/api/heartbeat", data={"camera_id": "CAM-A", "camera_key": key})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post("/api/heartbeat", data={"camera_id": "CAM-A", "camera_key": self.keys["CAM-A"]})
+        self.assertEqual(r.status_code, 401)
+
+    def test_disable_and_enable_camera(self):
+        user = self.new_client()
+        self.login_camera(user, "CAM-A", self.set_login_password("CAM-A"))
+        admin = self.admin_client()
+        admin.post("/admin/cameras/CAM-A/enabled", data={"enabled": "0"})
+        self.assertEqual(user.get("/api/cameras/status").json()["cameras"], [])
+        admin.post("/admin/cameras/CAM-A/enabled", data={"enabled": "1"})
+        with self.db() as conn:
+            self.assertEqual(conn.execute("SELECT enabled FROM cameras WHERE camera_id='CAM-A'").fetchone()[0], 1)
+
+    def test_api_login_password_endpoint_and_disable_revokes(self):
+        r = self.client.post("/api/admin/cameras/CAM-B/login-password", headers=ADMIN)
+        self.assertEqual(r.status_code, 200)
+        user = self.new_client()
+        self.assertEqual(self.login_camera(user, "CAM-B", r.json()["login_password"]).status_code, 303)
+        self.client.delete("/api/admin/cameras/CAM-B", headers=ADMIN)
+        with self.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM session_cameras").fetchone()[0], 0)
+        self.assertEqual(self.client.post("/api/admin/cameras/__test__/login-password", headers=ADMIN).status_code, 404)
+
+    def test_api_create_returns_login_password(self):
+        r = self.client.post("/api/admin/cameras", headers=ADMIN, json={"camera_id": "CAM-E", "latitude": 1, "longitude": 2})
+        self.assertEqual(self.login_camera(self.new_client(), "CAM-E", r.json()["login_password"]).status_code, 303)
+
+    def test_manage_set_camera_password(self):
+        out = subprocess.run([sys.executable, "manage.py", "set-camera-password", "CAM-A"], cwd=ROOT,
+                             capture_output=True, text=True, env=dict(os.environ), check=True).stdout
+        pw = re.search(r"Login password for CAM-A: (\S+)", out).group(1)
+        self.assertEqual(self.login_camera(self.new_client(), "CAM-A", pw).status_code, 303)
