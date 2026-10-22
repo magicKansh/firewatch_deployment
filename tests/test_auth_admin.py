@@ -249,3 +249,55 @@ class VisibilityMapTests(ServerTestCase):
         self.assertIn("CAM-A", mine)
         self.assertNotIn('href="/admin"', mine)
         self.assertIn('href="/admin"', self.admin.get("/").text)
+
+
+class SessionReviewTests(ServerTestCase):
+    def signed_in(self, camera_id):
+        client = self.new_client()
+        self.login_camera(client, camera_id, self.set_login_password(camera_id))
+        return client
+
+    def status_of(self, event_id):
+        with self.db() as conn:
+            return tuple(conn.execute("SELECT status, reviewed_by FROM device_events WHERE event_id=?",
+                                      (event_id,)).fetchone())
+
+    def test_owner_can_review_without_token(self):
+        event_id = self.upload_event("CAM-A")["event_id"]
+        client = self.signed_in("CAM-A")
+        self.assertIn('name="decision"', client.get(f"/review/{event_id}").text)
+        r = client.post(f"/review/{event_id}", data={"decision": "fire"}, follow_redirects=False)
+        self.assertEqual((r.status_code, r.headers["location"]), (303, f"/review/{event_id}"))
+        self.assertEqual(self.status_of(event_id), ("confirmed", "login:CAM-A"))
+        self.assertNotIn('name="decision"', client.get(f"/review/{event_id}").text)  # shows the outcome now
+
+    def test_admin_can_review_without_token(self):
+        event_id = self.upload_event("CAM-B")["event_id"]
+        admin = self.new_client()
+        self.login_admin(admin)
+        admin.post(f"/review/{event_id}", data={"decision": "not_fire", "label": "vehicle"})
+        self.assertEqual(self.status_of(event_id), ("false_alarm", "admin"))
+
+    def test_other_camera_cannot_review(self):
+        event_id = self.upload_event("CAM-B")["event_id"]
+        client = self.signed_in("CAM-A")
+        self.assertEqual(client.get(f"/review/{event_id}").status_code, 403)
+        self.assertEqual(client.post(f"/review/{event_id}", data={"decision": "fire"}).status_code, 403)
+        self.assertEqual(self.status_of(event_id)[0], "unconfirmed")
+
+    def test_camera_user_cannot_open_test_event(self):
+        row, _ = self.make_event("CAM-A", is_test=True)
+        client = self.signed_in("CAM-A")
+        self.assertEqual(client.get(f"/review/{row['event_id']}").status_code, 403)
+
+    def test_already_reviewed_event_cannot_be_changed_by_session(self):
+        row, _ = self.make_event("CAM-A", status="confirmed")
+        client = self.signed_in("CAM-A")
+        client.post(f"/review/{row['event_id']}", data={"decision": "not_fire"})
+        self.assertEqual(self.status_of(row["event_id"])[0], "confirmed")
+
+    def test_token_link_still_works_anonymously(self):
+        event_id = self.upload_event("CAM-A")["event_id"]
+        token = self.token_from_last_sms()
+        self.new_client().post(f"/review/{event_id}", data={"token": token, "decision": "not_fire", "label": "vehicle"})
+        self.assertEqual(self.status_of(event_id), ("false_alarm", "review-link"))

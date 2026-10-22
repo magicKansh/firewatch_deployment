@@ -362,16 +362,25 @@ def _event_for_display(row):
     return event
 
 
+def _session_access(viewer, row):
+    """A signed-in camera user (own cameras) or admin may review without the SMS token."""
+    return bool(row) and viewer.can_see_camera(row["camera_id"]) and (not row["is_test"] or viewer.sees_tests)
+
+
 @router.get("/review/{event_id}", response_class=HTMLResponse)
-def review_page(request: Request, event_id: str, token: str = "", answer: str = ""):
+def review_page(request: Request, event_id: str, token: str = "", answer: str = "",
+                viewer: Viewer = Depends(get_viewer)):
     """Read-only page; nothing changes until the reviewer presses a button (POST).
 
     Email security scanners open links automatically, so a GET must never confirm anything.
+    Access comes from the alert's token, or from being signed in to the event's camera.
     """
     with get_connection() as conn:
         state = _token_state(conn, event_id, token)
         row = conn.execute("SELECT * FROM device_events WHERE event_id=?", (event_id,)).fetchone()
         camera = conn.execute("SELECT name FROM cameras WHERE camera_id=?", (row["camera_id"],)).fetchone() if row else None
+    if _session_access(viewer, row):
+        state = "ok" if row["status"] == "unconfirmed" else "used"
     if state == "invalid" or not row:
         return templates.TemplateResponse(request=request, name="review.html", status_code=403,
                                           context={"state": "invalid", "event": None})
@@ -383,18 +392,27 @@ def review_page(request: Request, event_id: str, token: str = "", answer: str = 
 
 
 @router.post("/review/{event_id}")
-def submit_review(event_id: str, token: str = Form(...), decision: str = Form(...),
-                  label: str = Form("other"), note: str = Form("")):
+def submit_review(event_id: str, token: str = Form(""), decision: str = Form(...),
+                  label: str = Form("other"), note: str = Form(""), viewer: Viewer = Depends(get_viewer)):
     with get_connection() as conn:
         state = _token_state(conn, event_id, token)
-        if state == "invalid":
-            raise HTTPException(status_code=403, detail="Invalid review link.")
+        row = conn.execute("SELECT camera_id, status, is_test FROM device_events WHERE event_id=?",
+                           (event_id,)).fetchone()
+        reviewed = False
         if state == "ok":
             _apply_review(conn, event_id, decision, label, note, reviewer="review-link")
-    if state == "ok":
+            reviewed = True
+        elif _session_access(viewer, row):
+            if row["status"] == "unconfirmed":
+                reviewer = "admin" if viewer.is_admin else f"login:{row['camera_id']}"
+                _apply_review(conn, event_id, decision, label, note, reviewer=reviewer)
+                reviewed = True
+        elif state == "invalid":
+            raise HTTPException(status_code=403, detail="Invalid review link.")
+    if reviewed:
         invalidate_cache()
     # Post/redirect/get: the page now shows the recorded outcome (or why it couldn't be recorded).
-    return RedirectResponse(url=f"/review/{event_id}?token={token}", status_code=303)
+    return RedirectResponse(url=f"/review/{event_id}" + (f"?token={token}" if token else ""), status_code=303)
 
 
 @router.get("/confirm/{event_id}/{answer}")
