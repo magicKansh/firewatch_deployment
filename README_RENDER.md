@@ -63,7 +63,11 @@ curl -X POST "https://your-service.onrender.com/api/admin/cameras" \
   -d '{"camera_id":"CAM-001","latitude":41.123456,"longitude":-73.123456,"name":"North Ridge"}'
 ```
 
-The response contains the generated camera key. Save it securely; it goes into the Pi's `camera_config.json`.
+The response contains the generated camera key and a login password. Save both securely: the key goes into the Pi's `camera_config.json`, the login password goes to the people who look after the camera (they sign in at `/login`).
+
+Easier: sign in at `/admin/login` with `FIREWATCH_ADMIN_TOKEN` and use the control panel at `/admin` to add cameras, set camera logins and create test fires.
+
+**Upgrading an existing deployment:** cameras created before logins existed have no login, and visitors no longer see camera markers or the camera list. After deploying, open `/admin` and press **Create login** for each camera, then send each password to that camera's people.
 
 Add a phone recipient through `/docs` using `POST /api/admin/subscribers`, also with `Authorization: Bearer YOUR_FIREWATCH_ADMIN_TOKEN`:
 
