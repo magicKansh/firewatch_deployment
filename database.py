@@ -10,6 +10,10 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = Path(os.getenv("FIREWATCH_DB", DATA_DIR / "firewatch.db"))
 IMAGE_DIR = Path(os.getenv("FIREWATCH_IMAGE_DIR", BASE_DIR / "images"))
+# Only reviewed-and-confirmed camera events are shown to the public/community.
+PUBLIC_STATUSES = ("confirmed", "active", "resolved")
+# Hidden camera that owns admin "drop a fire on the map" test events. Never listed, never loginable.
+TEST_CAMERA_ID = "__test__"
 
 
 def utc_now():
@@ -117,6 +121,19 @@ def init_db():
                 FOREIGN KEY(subscriber_id) REFERENCES subscribers(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS session_cameras (
+                token_hash TEXT NOT NULL REFERENCES sessions(token_hash) ON DELETE CASCADE,
+                camera_id TEXT NOT NULL REFERENCES cameras(camera_id) ON DELETE CASCADE,
+                PRIMARY KEY (token_hash, camera_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON device_events(timestamp);
             CREATE INDEX IF NOT EXISTS idx_events_status ON device_events(status);
             CREATE INDEX IF NOT EXISTS idx_events_camera_status ON device_events(camera_id,status,last_seen_at);
@@ -134,6 +151,7 @@ def init_db():
                 "last_heartbeat_at": "TEXT",
                 "created_at": "TEXT NOT NULL DEFAULT ''",
                 "software_version": "TEXT NOT NULL DEFAULT ''",
+                "login_password_hash": "TEXT",
             },
             "subscribers": {"enabled": "INTEGER NOT NULL DEFAULT 1"},
             "device_events": {
@@ -154,6 +172,7 @@ def init_db():
                 "reviewed_at": "TEXT",
                 "reviewed_by": "TEXT NOT NULL DEFAULT ''",
                 "suppressed_count": "INTEGER NOT NULL DEFAULT 0",
+                "is_test": "INTEGER NOT NULL DEFAULT 0",
             },
         }
         for table, columns in migrations.items():

@@ -25,5 +25,6 @@ app.mount("/images", StaticFiles(directory=image_dir), name="images")
 
 from device_api import router as device_router
 from camera_api import router as camera_router
+import auth  # noqa: E402,F401  (sessions; login routes are added below in a later step)
 app.include_router(device_router)
 app.include_router(camera_router)

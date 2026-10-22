@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from camera_api import _auth as require_admin, is_admin
-from database import IMAGE_DIR, camera_key_matches, get_camera, get_connection
+from database import IMAGE_DIR, PUBLIC_STATUSES, camera_key_matches, get_camera, get_connection  # noqa: F401 (re-exported)
 from fire_data import invalidate_cache
 from notifications import send_fire_confirmation
 
@@ -33,8 +33,6 @@ FALSE_ALARM_COOLDOWN_SECONDS = int(os.getenv("FALSE_ALARM_COOLDOWN_SECONDS", "36
 FALSE_ALARM_RADIUS_PX = float(os.getenv("FALSE_ALARM_RADIUS_PX", "3"))
 FALSE_ALARM_TEMP_MARGIN_C = float(os.getenv("FALSE_ALARM_TEMP_MARGIN_C", "15"))
 
-# Only reviewed-and-confirmed camera events are shown to the public/community.
-PUBLIC_STATUSES = ("confirmed", "active", "resolved")
 REVIEW_LABELS = {
     "fire": "Fire",
     "sun_glare": "Sun or reflection",
