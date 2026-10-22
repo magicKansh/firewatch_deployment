@@ -14,3 +14,4 @@ event_*.jpg
 *.h264
 camera_config.json
 outbox/
+.superpowers/

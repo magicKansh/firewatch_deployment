@@ -32,7 +32,7 @@ DETECTED_AT = (datetime.now(timezone.utc) - timedelta(minutes=3)).replace(micros
 @unittest.skipIf(TestClient is None, "server requirements not installed")
 class ServerFlowTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         env = {
             "FIREWATCH_DB": os.path.join(self.tmp.name, "fw.db"),
             "FIREWATCH_IMAGE_DIR": os.path.join(self.tmp.name, "images"),
@@ -43,9 +43,8 @@ class ServerFlowTests(unittest.TestCase):
         }
         self.env = mock.patch.dict(os.environ, env)
         self.env.start()
-        for name in ["database", "fire_data", "notifications", "camera_api", "device_api", "app", "routes", "map"]:
-            sys.modules.pop(name, None)
-        self.map = importlib.import_module("map")
+        from tests.support import reload_app
+        self.map = reload_app()
         self.notifications = sys.modules["notifications"]
         self.client = TestClient(self.map.app)
         self.sent = []
@@ -98,7 +97,7 @@ class ServerFlowTests(unittest.TestCase):
 
         public = self.public_events()
         self.assertEqual(public["events"], [])
-        self.assertEqual(public["counts"], {"pending_review": 1, "confirmed": 0})
+        self.assertEqual(public["counts"], {"pending_review": 0, "confirmed": 0})  # pending count is private now
         admin = self.client.get("/api/device-events", headers=ADMIN).json()["events"]
         self.assertEqual(len(admin), 1)
         self.assertEqual(len(admin[0]["context_images"]), 2)

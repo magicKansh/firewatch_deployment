@@ -9,3 +9,5 @@ shapely
 slowapi
 pydantic
 twilio
+numpy
+Pillow

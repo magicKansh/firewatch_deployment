@@ -8,13 +8,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from camera_api import _auth as require_admin, is_admin
-from database import IMAGE_DIR, camera_key_matches, get_camera, get_connection
+from auth import Viewer, get_viewer
+from camera_api import _auth as require_admin
+from database import IMAGE_DIR, PUBLIC_STATUSES, TEST_CAMERA_ID, camera_key_matches, get_camera, get_connection  # noqa: F401 (re-exported)
 from fire_data import invalidate_cache
 from notifications import send_fire_confirmation
 
@@ -33,8 +34,6 @@ FALSE_ALARM_COOLDOWN_SECONDS = int(os.getenv("FALSE_ALARM_COOLDOWN_SECONDS", "36
 FALSE_ALARM_RADIUS_PX = float(os.getenv("FALSE_ALARM_RADIUS_PX", "3"))
 FALSE_ALARM_TEMP_MARGIN_C = float(os.getenv("FALSE_ALARM_TEMP_MARGIN_C", "15"))
 
-# Only reviewed-and-confirmed camera events are shown to the public/community.
-PUBLIC_STATUSES = ("confirmed", "active", "resolved")
 REVIEW_LABELS = {
     "fire": "Fire",
     "sun_glare": "Sun or reflection",
@@ -120,28 +119,29 @@ def _parse_detected_at(value, now):
     return stamp if now - timedelta(days=7) <= stamp <= now + timedelta(minutes=5) else now
 
 
-def _find_open_event(conn, camera_id, now):
+def _find_open_event(conn, camera_id, now, is_test=False):
+    # Test events and real events never merge into each other.
     cutoff = (now - timedelta(seconds=EVENT_DEDUPE_SECONDS)).isoformat()
     return conn.execute(
         """SELECT * FROM device_events
            WHERE camera_id=? AND status IN ('unconfirmed','confirmed','active')
-             AND last_seen_at >= ?
+             AND last_seen_at >= ? AND is_test=?
            ORDER BY last_seen_at DESC LIMIT 1""",
-        (camera_id, cutoff),
+        (camera_id, cutoff, int(is_test)),
     ).fetchone()
 
 
-def _find_dismissed_match(conn, camera_id, now, hotspot_x, hotspot_y, max_temperature_c):
+def _find_dismissed_match(conn, camera_id, now, hotspot_x, hotspot_y, max_temperature_c, is_test=False):
     """A recent false alarm at the same spot in the frame, if this detection repeats it."""
     if hotspot_x < 0 or hotspot_y < 0:
         return None
     cutoff = (now - timedelta(seconds=FALSE_ALARM_COOLDOWN_SECONDS)).isoformat()
     rows = conn.execute(
         """SELECT * FROM device_events
-           WHERE camera_id=? AND status='false_alarm' AND last_seen_at >= ?
+           WHERE camera_id=? AND status='false_alarm' AND last_seen_at >= ? AND is_test=?
              AND hotspot_x >= 0 AND hotspot_y >= 0
            ORDER BY last_seen_at DESC LIMIT 10""",
-        (camera_id, cutoff),
+        (camera_id, cutoff, int(is_test)),
     ).fetchall()
     for row in rows:
         close = math.hypot(row["hotspot_x"] - hotspot_x, row["hotspot_y"] - hotspot_y) <= FALSE_ALARM_RADIUS_PX
@@ -177,6 +177,63 @@ def _update_existing(conn, row, now, fire_size_percent, max_temperature_c, durat
     )
     _add_observation(conn, row["event_id"], now, fire_size_percent, max_temperature_c, duration_seconds, image_path)
     return row["event_id"], new_score, magnitude
+
+
+def new_event_id():
+    return uuid.uuid4().hex[:12]
+
+
+def create_event(conn, event_id, camera, *, fire_size_percent, max_temperature_c, duration_seconds,
+                 image_path="", video_path="", context_paths=(), visual_fire_score=0.0,
+                 detection_method="thermal", hotspot_x=-1.0, hotspot_y=-1.0, first_seen=None,
+                 location=None, status="unconfirmed", severity=None, is_test=False, now=None):
+    """Insert a new device event (+ first observation, + review token when it needs review).
+
+    Shared by Pi uploads and admin test fires. Returns (row, raw review token or None).
+    """
+    now = now or utc_now()
+    score, magnitude = severity or _severity(fire_size_percent, duration_seconds, max_temperature_c)
+    latitude, longitude = location or (float(camera["latitude"]), float(camera["longitude"]))
+    camera_id = camera["camera_id"]
+    row = {
+        "event_id": event_id, "camera_id": camera_id, "timestamp": now.isoformat(),
+        "first_seen_at": (first_seen or now).isoformat(), "last_seen_at": now.isoformat(),
+        "latitude": float(latitude), "longitude": float(longitude),
+        "fire_size_percent": round(fire_size_percent, 2), "max_temperature_c": round(max_temperature_c, 2),
+        "duration_seconds": round(duration_seconds, 1), "severity_index": score,
+        "magnitude": magnitude, "status": status, "image": image_path,
+        "video": video_path, "visual_fire_score": round(visual_fire_score, 4),
+        "detection_method": detection_method[:80],
+        "place": camera.get("name") or camera_id, "source": "device", "dedupe_key": _dedupe_key(camera_id),
+        "context_images": json.dumps(list(context_paths)),
+        "hotspot_x": hotspot_x if hotspot_x >= 0 else None,
+        "hotspot_y": hotspot_y if hotspot_y >= 0 else None,
+        "is_test": int(is_test),
+    }
+    if status == "confirmed":
+        row["confirmed_at"] = now.isoformat()
+    columns = list(row)
+    conn.execute(
+        f"INSERT INTO device_events ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
+        tuple(row[c] for c in columns),
+    )
+    _add_observation(conn, event_id, now, fire_size_percent, max_temperature_c, duration_seconds, image_path)
+    token = None
+    if status == "unconfirmed":
+        token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO confirmation_tokens(event_id,token_hash,created_at,expires_at) VALUES (?,?,?,?)",
+            (event_id, _hash_token(token), now.isoformat(), (now + timedelta(hours=TOKEN_TTL_HOURS)).isoformat()),
+        )
+    return row, token
+
+
+def notify_new_event(row, token):
+    """Send the review alert; never raises (a failed SMS must not lose the event)."""
+    try:
+        return send_fire_confirmation({**row, "confirm_token": token})
+    except Exception as exc:
+        return {"sms_sent": 0, "email_sent": 0, "error": str(exc)}
 
 
 @router.post("/api/camera-event")
@@ -232,43 +289,18 @@ async def camera_event(
             return {"ok": True, "event_id": dismissed["event_id"], "suppressed": True, "status": "false_alarm",
                     "reason": "Same hotspot was recently reviewed as not a fire."}
 
-        event_id = uuid.uuid4().hex[:12]
-        token = secrets.token_urlsafe(32)
-        first_seen = _parse_detected_at(detected_at, now)
-        score, magnitude = _severity(fire_size_percent, duration_seconds, max_temperature_c)
-        row = {
-            "event_id": event_id, "camera_id": camera_id, "timestamp": now.isoformat(),
-            "first_seen_at": first_seen.isoformat(), "last_seen_at": now.isoformat(),
-            "latitude": float(camera["latitude"]), "longitude": float(camera["longitude"]),
-            "fire_size_percent": round(fire_size_percent, 2), "max_temperature_c": round(max_temperature_c, 2),
-            "duration_seconds": round(duration_seconds, 1), "severity_index": score,
-            "magnitude": magnitude, "status": "unconfirmed", "image": _save_image(image, event_id),
-            "video": _save_video(video, event_id), "visual_fire_score": round(visual_fire_score, 4),
-            "detection_method": detection_method[:80],
-            "place": camera.get("name") or camera_id, "source": "device", "dedupe_key": _dedupe_key(camera_id),
-            "context_images": json.dumps(_save_context(context_images, event_id)),
-            "hotspot_x": hotspot_x if hotspot_x >= 0 else None,
-            "hotspot_y": hotspot_y if hotspot_y >= 0 else None,
-        }
-        columns = list(row)
-        conn.execute(
-            f"INSERT INTO device_events ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
-            tuple(row[c] for c in columns),
-        )
-        _add_observation(conn, event_id, now, fire_size_percent, max_temperature_c, duration_seconds, row["image"])
-        conn.execute(
-            "INSERT INTO confirmation_tokens(event_id,token_hash,created_at,expires_at) VALUES (?,?,?,?)",
-            (event_id, _hash_token(token), now.isoformat(), (now + timedelta(hours=TOKEN_TTL_HOURS)).isoformat()),
+        event_id = new_event_id()
+        row, token = create_event(
+            conn, event_id, camera, fire_size_percent=fire_size_percent, max_temperature_c=max_temperature_c,
+            duration_seconds=duration_seconds, image_path=_save_image(image, event_id),
+            video_path=_save_video(video, event_id), context_paths=_save_context(context_images, event_id),
+            visual_fire_score=visual_fire_score, detection_method=detection_method,
+            hotspot_x=hotspot_x, hotspot_y=hotspot_y, first_seen=_parse_detected_at(detected_at, now), now=now,
         )
 
     invalidate_cache()
-    try:
-        result = send_fire_confirmation({**row, "confirm_token": token})
-    except Exception as exc:
-        result = {"sms_sent": 0, "email_sent": 0, "error": str(exc)}
-
-    return {"ok": True, "event_id": event_id, "status": "unconfirmed", "severity_index": score,
-            "magnitude": magnitude, "notifications": result}
+    return {"ok": True, "event_id": event_id, "status": "unconfirmed", "severity_index": row["severity_index"],
+            "magnitude": row["magnitude"], "notifications": notify_new_event(row, token)}
 
 
 @router.post("/api/heartbeat")
@@ -330,16 +362,25 @@ def _event_for_display(row):
     return event
 
 
+def _session_access(viewer, row):
+    """A signed-in camera user (own cameras) or admin may review without the SMS token."""
+    return bool(row) and viewer.can_see_camera(row["camera_id"]) and (not row["is_test"] or viewer.sees_tests)
+
+
 @router.get("/review/{event_id}", response_class=HTMLResponse)
-def review_page(request: Request, event_id: str, token: str = "", answer: str = ""):
+def review_page(request: Request, event_id: str, token: str = "", answer: str = "",
+                viewer: Viewer = Depends(get_viewer)):
     """Read-only page; nothing changes until the reviewer presses a button (POST).
 
     Email security scanners open links automatically, so a GET must never confirm anything.
+    Access comes from the alert's token, or from being signed in to the event's camera.
     """
     with get_connection() as conn:
         state = _token_state(conn, event_id, token)
         row = conn.execute("SELECT * FROM device_events WHERE event_id=?", (event_id,)).fetchone()
         camera = conn.execute("SELECT name FROM cameras WHERE camera_id=?", (row["camera_id"],)).fetchone() if row else None
+    if _session_access(viewer, row):
+        state = "ok" if row["status"] == "unconfirmed" else "used"
     if state == "invalid" or not row:
         return templates.TemplateResponse(request=request, name="review.html", status_code=403,
                                           context={"state": "invalid", "event": None})
@@ -351,18 +392,27 @@ def review_page(request: Request, event_id: str, token: str = "", answer: str = 
 
 
 @router.post("/review/{event_id}")
-def submit_review(event_id: str, token: str = Form(...), decision: str = Form(...),
-                  label: str = Form("other"), note: str = Form("")):
+def submit_review(event_id: str, token: str = Form(""), decision: str = Form(...),
+                  label: str = Form("other"), note: str = Form(""), viewer: Viewer = Depends(get_viewer)):
     with get_connection() as conn:
         state = _token_state(conn, event_id, token)
-        if state == "invalid":
-            raise HTTPException(status_code=403, detail="Invalid review link.")
+        row = conn.execute("SELECT camera_id, status, is_test FROM device_events WHERE event_id=?",
+                           (event_id,)).fetchone()
+        reviewed = False
         if state == "ok":
             _apply_review(conn, event_id, decision, label, note, reviewer="review-link")
-    if state == "ok":
+            reviewed = True
+        elif _session_access(viewer, row):
+            if row["status"] == "unconfirmed":
+                reviewer = "admin" if viewer.is_admin else f"login:{row['camera_id']}"
+                _apply_review(conn, event_id, decision, label, note, reviewer=reviewer)
+                reviewed = True
+        elif state == "invalid":
+            raise HTTPException(status_code=403, detail="Invalid review link.")
+    if reviewed:
         invalidate_cache()
     # Post/redirect/get: the page now shows the recorded outcome (or why it couldn't be recorded).
-    return RedirectResponse(url=f"/review/{event_id}?token={token}", status_code=303)
+    return RedirectResponse(url=f"/review/{event_id}" + (f"?token={token}" if token else ""), status_code=303)
 
 
 @router.get("/confirm/{event_id}/{answer}")
@@ -394,41 +444,55 @@ PRIVATE_FIELDS = ("review_note", "reviewed_by", "dedupe_key", "suppressed_count"
 
 
 @router.get("/api/device-events")
-def device_events(status: str | None = None, limit: int = 100, authorization: str | None = Header(default=None)):
-    """Public callers only see confirmed fires; admins (Bearer token) see every status."""
+def device_events(status: str | None = None, limit: int = 100, viewer: Viewer = Depends(get_viewer)):
+    """Everyone sees confirmed real fires; camera logins also see their own cameras' events;
+    admins (session or Bearer token) see everything, including test fires."""
     limit = max(1, min(limit, 500))
-    admin = is_admin(authorization)
-    statuses = [status] if status else None
-    if not admin:
-        statuses = [s for s in (statuses or PUBLIC_STATUSES) if s in PUBLIC_STATUSES]
+    where, params = _visible_events_sql(viewer)
+    if status:
+        where += " AND status=?"
+        params.append(status)
     with get_connection() as conn:
-        if statuses is None:
-            rows = conn.execute("SELECT * FROM device_events ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
-        elif statuses:
-            marks = ",".join("?" * len(statuses))
-            rows = conn.execute(f"SELECT * FROM device_events WHERE status IN ({marks}) ORDER BY timestamp DESC LIMIT ?",
-                                (*statuses, limit)).fetchall()
-        else:
-            rows = []
-        counts = dict(conn.execute("SELECT status, COUNT(*) FROM device_events GROUP BY status").fetchall())
+        rows = conn.execute(f"SELECT * FROM device_events WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+                            (*params, limit)).fetchall()
+        pending_where, pending_params = _visible_events_sql(viewer, include_tests=False)
+        pending = conn.execute(f"SELECT COUNT(*) FROM device_events WHERE {pending_where} AND status='unconfirmed'",
+                               pending_params).fetchone()[0]
+        marks = ",".join("?" * len(PUBLIC_STATUSES))
+        confirmed = conn.execute(f"SELECT COUNT(*) FROM device_events WHERE is_test=0 AND status IN ({marks})",
+                                 PUBLIC_STATUSES).fetchone()[0]
     events = [_event_for_display(r) for r in rows]
-    if not admin:
+    if not viewer.is_admin:
         for event in events:
             for field in PRIVATE_FIELDS:
                 event.pop(field, None)
-    return {"events": events, "counts": {
-        "pending_review": counts.get("unconfirmed", 0),
-        "confirmed": sum(counts.get(s, 0) for s in PUBLIC_STATUSES),
-    }}
+    return {"events": events, "counts": {"pending_review": pending, "confirmed": confirmed}}
+
+
+def _visible_events_sql(viewer, include_tests=True):
+    """WHERE clause (and params) for the device events this viewer may see."""
+    if viewer.is_admin:
+        return ("1=1", []) if include_tests else ("is_test=0", [])
+    marks = ",".join("?" * len(PUBLIC_STATUSES))
+    cameras = sorted(viewer.camera_ids)
+    own = f" OR camera_id IN ({','.join('?' * len(cameras))})" if cameras else ""
+    return f"is_test=0 AND (status IN ({marks}){own})", [*PUBLIC_STATUSES, *cameras]
 
 
 @router.get("/api/cameras/status")
-def camera_status():
+def camera_status(viewer: Viewer = Depends(get_viewer)):
+    """Camera locations and health: own cameras for camera logins, all for admins, none for visitors."""
+    if viewer.is_anonymous:
+        return {"cameras": []}
     now = utc_now()
     with get_connection() as conn:
-        rows = conn.execute("SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,last_heartbeat_at,software_version FROM cameras ORDER BY camera_id").fetchall()
+        rows = conn.execute("""SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,last_heartbeat_at,
+                               software_version FROM cameras WHERE camera_id<>? ORDER BY camera_id""",
+                            (TEST_CAMERA_ID,)).fetchall()
     result = []
     for r in rows:
+        if not viewer.can_see_camera(r["camera_id"]):
+            continue
         item = dict(r)
         last = item.get("last_seen_at")
         if not item["enabled"]:

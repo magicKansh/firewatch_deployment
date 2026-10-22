@@ -92,6 +92,14 @@ python manage.py add-subscriber '*' --phone +15555550123
 
 Email can be added with `--email`.
 
+Give the people who look after the camera a login (prints a password once):
+
+```bash
+python manage.py set-camera-password CAM-001
+```
+
+Or do all of this from the admin control panel at `/admin` (see below).
+
 ## Raspberry Pi setup
 
 Hardware: Raspberry Pi 5 + Adafruit MLX90640 (55°) on I2C (3V3, GND, SDA = GPIO2, SCL = GPIO3). A Pi Camera is **optional**: without one the node runs thermal-only, and with one it also attaches a visible photo, a short clip and a colour heuristic.
@@ -122,6 +130,28 @@ To update later, run `git pull && sudo ./pi/install.sh`.
 
 **Tuning tip:** the MLX90640 has 32×24 pixels across 55°. At 30 m one pixel covers about 0.9 m, so a small, distant fire is only a few pixels. Tune `MIN_CLUSTER_PIXELS` and `HOT_TEMP_C` for your view, and use `THERMAL_FLIP_H` / `THERMAL_FLIP_V` if the image is mirrored.
 
+## Logins, who sees what, and the admin panel
+
+| | Visitor | Signed in to a camera | Admin |
+|---|---|---|---|
+| Confirmed real fires (map, list, route avoidance) | yes | yes | yes |
+| Camera markers, status, camera list | no | own cameras | all |
+| Unreviewed and false-alarm detections, pending count | no | own cameras | all |
+| Review a detection from the dashboard | no | own cameras | all |
+| Test fires (labelled TEST) | no | no | yes |
+
+**Camera logins.** Each camera has a login (camera ID + password) for the people who look after it, separate from the Pi's device key. They sign in at `/login`; someone with several cameras can sign in to each one in the same browser ("Add another camera"). Signed-in users see their cameras on the map and in the sidebar, and get a **Review this detection** link next to each unreviewed alert, without needing the SMS link. Sessions last 30 days and are stored server-side; resetting a camera's password, or disabling the camera, signs everyone out of it immediately. Login attempts are limited to 10 per minute per IP.
+
+**Admin panel.** Sign in at `/admin/login` with `FIREWATCH_ADMIN_TOKEN` as the password. At `/admin` you can:
+
+- add a camera (shows its Pi key and login password once),
+- create or reset a camera's login password, reset its Pi key, enable or disable it,
+- **simulate a camera detection**: the server draws a fake heat-map with the same code as the Pi, creates an unconfirmed event and sends the real alerts prefixed with `[TEST]`, so you can walk through the whole review flow,
+- **drop a confirmed fire on the map** (click the map to place it) to test map display and route avoidance,
+- list and delete test fires, or delete them all (their images are removed too).
+
+Test fires are only visible to admins. The public and camera logins never see them, and only admins' route planning avoids them. Test events never merge with real ones from the same camera.
+
 ## Review flow and the community dashboard
 
 1. The Pi detects persistent heat and uploads the heat-signature image.
@@ -133,7 +163,7 @@ To update later, run `git pull && sudo ./pi/install.sh`.
 
 **Links are safe to open.** Opening the review link never changes anything; only pressing a button does. Email security scanners open links automatically, so this matters. Old `/confirm/...` links now open the review page. Each link works once and expires after `CONFIRMATION_TOKEN_TTL_HOURS`. Admins can review any event with `POST /api/admin/events/{event_id}/review`, for example when an alert was missed.
 
-The public `GET /api/device-events` returns only confirmed fires, plus counts of how many are pending review. With the admin bearer token it returns every status.
+The public `GET /api/device-events` returns only confirmed real fires. Signed-in camera users also get their own cameras' other events and pending count; admins (session or bearer token) get everything, including test fires. `GET /api/cameras/status` returns nothing to visitors, own cameras to camera logins, and all cameras to admins.
 
 ## Admin API
 
@@ -146,13 +176,14 @@ Authorization: Bearer YOUR_TOKEN
 Endpoints:
 
 - `GET /api/admin/cameras`
-- `POST /api/admin/cameras`
+- `POST /api/admin/cameras` (returns the Pi key and a login password, each shown once)
+- `POST /api/admin/cameras/{camera_id}/login-password` (new login password; signs that camera out everywhere)
 - `PUT /api/admin/cameras/{camera_id}`
-- `DELETE /api/admin/cameras/{camera_id}` (disables it)
+- `DELETE /api/admin/cameras/{camera_id}` (disables it and signs its viewers out)
 - `GET /api/admin/subscribers`
 - `POST /api/admin/subscribers`
 - `GET /api/cameras/status`
-- `GET /api/device-events` (all statuses with the admin token; public callers only see confirmed fires)
+- `GET /api/device-events` (everything with the admin token, including test fires; public callers only see confirmed real fires)
 - `POST /api/admin/events/{event_id}/review` with `{"decision": "fire" | "not_fire", "label": "sun_glare", "note": ""}`
 
 ## Important production notes

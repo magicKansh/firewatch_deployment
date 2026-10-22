@@ -4,9 +4,10 @@
 import os
 import requests
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from app import app, limiter
+from auth import Viewer, get_viewer
 from fire_data import get_avoid_geojson
 
 
@@ -33,7 +34,7 @@ def _require_ors_key():
         )
 
 
-def call_ors_route(start, end, profile):
+def call_ors_route(start, end, profile, avoid=None):
     """Request a route using the selected travel profile."""
     _require_ors_key()
 
@@ -46,8 +47,6 @@ def call_ors_route(start, end, profile):
         "coordinates": [start, end],
         "instructions": True,
     }
-
-    avoid = get_avoid_geojson()
 
     if avoid:
         payload["options"] = {"avoid_polygons": avoid}
@@ -116,7 +115,7 @@ def geocode(query):
 
 @app.post("/routes")
 @limiter.limit("10/minute")
-async def calculate_routes(request: Request):
+async def calculate_routes(request: Request, viewer: Viewer = Depends(get_viewer)):
     """Calculate a route for driving, biking, and walking."""
     _require_ors_key()
 
@@ -170,14 +169,14 @@ async def calculate_routes(request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    avoid = get_avoid_geojson()
+    avoid = get_avoid_geojson(viewer)
     avoidance_active = bool(avoid)
 
     results = {}
 
     for key, profile in PROFILES.items():
         try:
-            route = call_ors_route(start, end, profile)
+            route = call_ors_route(start, end, profile, avoid)
             features = route.get("features") or []
 
             if not features:

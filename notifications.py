@@ -28,8 +28,12 @@ def review_url(event):
     return f"{PUBLIC_BASE_URL}/review/{event['event_id']}?token={event['confirm_token']}"
 
 
+def _test_prefix(event):
+    return "[TEST] " if event.get("is_test") else ""
+
+
 def _alert_text(event):
-    return (f"FIREWATCH: possible fire seen by {event.get('place') or event['camera_id']}. "
+    return (f"{_test_prefix(event)}FIREWATCH: possible fire seen by {event.get('place') or event['camera_id']}. "
             f"Max {event['max_temperature_c']:.0f} C, hot area {event['fire_size_percent']:.1f}% "
             f"({event['magnitude']}). Is it a fire? Look at the heat image and answer here:\n"
             f"{review_url(event)}")
@@ -92,7 +96,7 @@ def send_fire_confirmation(event):
         for s in emails:
             try:
                 msg = EmailMessage()
-                msg["Subject"] = f"Firewatch: possible fire at {event.get('place') or event['camera_id']} - please review"
+                msg["Subject"] = f"{_test_prefix(event)}Firewatch: possible fire at {event.get('place') or event['camera_id']} - please review"
                 msg["From"] = FROM_EMAIL
                 msg["To"] = s["email"].strip()
                 msg.set_content(body + "\n\nThe heat-signature image is attached. Nothing is published "
