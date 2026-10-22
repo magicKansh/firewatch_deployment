@@ -2,7 +2,7 @@ import os
 import secrets
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from database import get_connection, hash_camera_key, utc_now
+from database import TEST_CAMERA_ID, get_connection, hash_camera_key, utc_now
 
 router = APIRouter(prefix="/api/admin")
 ADMIN_TOKEN = os.getenv("FIREWATCH_ADMIN_TOKEN")
@@ -49,7 +49,7 @@ class SubscriberCreate(BaseModel):
 def list_cameras(authorization: str | None = Header(default=None)):
     _auth(authorization)
     with get_connection() as conn:
-        rows = conn.execute("SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,software_version FROM cameras ORDER BY camera_id").fetchall()
+        rows = conn.execute("SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,software_version FROM cameras WHERE camera_id<>? ORDER BY camera_id", (TEST_CAMERA_ID,)).fetchall()
     return {"cameras": [dict(r) for r in rows]}
 
 

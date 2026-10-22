@@ -156,3 +156,41 @@ class TestEventIsolationTests(ServerTestCase):
         first = self.upload_event("CAM-A")
         self.assertEqual(first["status"], "unconfirmed")
         self.assertTrue(self.upload_event("CAM-A")["deduplicated"])
+
+
+class VisibilityApiTests(ServerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.make_visibility_fixture()
+
+    def ids(self, client, **params):
+        return {e["event_id"] for e in client.get("/api/device-events", params=params).json()["events"]}
+
+    def test_event_visibility_matrix(self):
+        self.assertEqual(self.ids(self.anon), {self.b_confirmed})
+        self.assertEqual(self.ids(self.cam_a), {self.b_confirmed, self.a_unconfirmed})
+        self.assertEqual(self.ids(self.admin), {self.b_confirmed, self.a_unconfirmed, self.b_unconfirmed,
+                                                self.test_confirmed, self.test_unconfirmed})
+
+    def test_status_filter_cannot_widen_visibility(self):
+        self.assertEqual(self.ids(self.anon, status="unconfirmed"), set())
+        self.assertEqual(self.ids(self.cam_a, status="unconfirmed"), {self.a_unconfirmed})
+
+    def test_pending_counts_are_scoped(self):
+        count = lambda c: c.get("/api/device-events").json()["counts"]["pending_review"]
+        self.assertEqual((count(self.anon), count(self.cam_a), count(self.admin)), (0, 1, 2))
+
+    def test_camera_status_is_scoped(self):
+        names = lambda c: [x["camera_id"] for x in c.get("/api/cameras/status").json()["cameras"]]
+        self.assertEqual(names(self.anon), [])
+        self.assertEqual(names(self.cam_a), ["CAM-A"])
+        self.assertEqual(names(self.admin), ["CAM-A", "CAM-B"])
+
+    def test_admin_sees_is_test_flag(self):
+        flags = {e["event_id"]: e["is_test"] for e in self.admin.get("/api/device-events").json()["events"]}
+        self.assertEqual(flags[self.test_unconfirmed], 1)
+        self.assertEqual(flags[self.a_unconfirmed], 0)
+
+    def test_bearer_admin_still_works(self):
+        from tests.support import ADMIN
+        self.assertEqual(len(self.anon.get("/api/device-events", headers=ADMIN).json()["events"]), 5)

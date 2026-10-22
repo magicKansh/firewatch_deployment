@@ -97,7 +97,7 @@ class ServerFlowTests(unittest.TestCase):
 
         public = self.public_events()
         self.assertEqual(public["events"], [])
-        self.assertEqual(public["counts"], {"pending_review": 1, "confirmed": 0})
+        self.assertEqual(public["counts"], {"pending_review": 0, "confirmed": 0})  # pending count is private now
         admin = self.client.get("/api/device-events", headers=ADMIN).json()["events"]
         self.assertEqual(len(admin), 1)
         self.assertEqual(len(admin[0]["context_images"]), 2)

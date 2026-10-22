@@ -8,13 +8,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from camera_api import _auth as require_admin, is_admin
-from database import IMAGE_DIR, PUBLIC_STATUSES, camera_key_matches, get_camera, get_connection  # noqa: F401 (re-exported)
+from auth import Viewer, get_viewer
+from camera_api import _auth as require_admin
+from database import IMAGE_DIR, PUBLIC_STATUSES, TEST_CAMERA_ID, camera_key_matches, get_camera, get_connection  # noqa: F401 (re-exported)
 from fire_data import invalidate_cache
 from notifications import send_fire_confirmation
 
@@ -425,41 +426,55 @@ PRIVATE_FIELDS = ("review_note", "reviewed_by", "dedupe_key", "suppressed_count"
 
 
 @router.get("/api/device-events")
-def device_events(status: str | None = None, limit: int = 100, authorization: str | None = Header(default=None)):
-    """Public callers only see confirmed fires; admins (Bearer token) see every status."""
+def device_events(status: str | None = None, limit: int = 100, viewer: Viewer = Depends(get_viewer)):
+    """Everyone sees confirmed real fires; camera logins also see their own cameras' events;
+    admins (session or Bearer token) see everything, including test fires."""
     limit = max(1, min(limit, 500))
-    admin = is_admin(authorization)
-    statuses = [status] if status else None
-    if not admin:
-        statuses = [s for s in (statuses or PUBLIC_STATUSES) if s in PUBLIC_STATUSES]
+    where, params = _visible_events_sql(viewer)
+    if status:
+        where += " AND status=?"
+        params.append(status)
     with get_connection() as conn:
-        if statuses is None:
-            rows = conn.execute("SELECT * FROM device_events ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
-        elif statuses:
-            marks = ",".join("?" * len(statuses))
-            rows = conn.execute(f"SELECT * FROM device_events WHERE status IN ({marks}) ORDER BY timestamp DESC LIMIT ?",
-                                (*statuses, limit)).fetchall()
-        else:
-            rows = []
-        counts = dict(conn.execute("SELECT status, COUNT(*) FROM device_events GROUP BY status").fetchall())
+        rows = conn.execute(f"SELECT * FROM device_events WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+                            (*params, limit)).fetchall()
+        pending_where, pending_params = _visible_events_sql(viewer, include_tests=False)
+        pending = conn.execute(f"SELECT COUNT(*) FROM device_events WHERE {pending_where} AND status='unconfirmed'",
+                               pending_params).fetchone()[0]
+        marks = ",".join("?" * len(PUBLIC_STATUSES))
+        confirmed = conn.execute(f"SELECT COUNT(*) FROM device_events WHERE is_test=0 AND status IN ({marks})",
+                                 PUBLIC_STATUSES).fetchone()[0]
     events = [_event_for_display(r) for r in rows]
-    if not admin:
+    if not viewer.is_admin:
         for event in events:
             for field in PRIVATE_FIELDS:
                 event.pop(field, None)
-    return {"events": events, "counts": {
-        "pending_review": counts.get("unconfirmed", 0),
-        "confirmed": sum(counts.get(s, 0) for s in PUBLIC_STATUSES),
-    }}
+    return {"events": events, "counts": {"pending_review": pending, "confirmed": confirmed}}
+
+
+def _visible_events_sql(viewer, include_tests=True):
+    """WHERE clause (and params) for the device events this viewer may see."""
+    if viewer.is_admin:
+        return ("1=1", []) if include_tests else ("is_test=0", [])
+    marks = ",".join("?" * len(PUBLIC_STATUSES))
+    cameras = sorted(viewer.camera_ids)
+    own = f" OR camera_id IN ({','.join('?' * len(cameras))})" if cameras else ""
+    return f"is_test=0 AND (status IN ({marks}){own})", [*PUBLIC_STATUSES, *cameras]
 
 
 @router.get("/api/cameras/status")
-def camera_status():
+def camera_status(viewer: Viewer = Depends(get_viewer)):
+    """Camera locations and health: own cameras for camera logins, all for admins, none for visitors."""
+    if viewer.is_anonymous:
+        return {"cameras": []}
     now = utc_now()
     with get_connection() as conn:
-        rows = conn.execute("SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,last_heartbeat_at,software_version FROM cameras ORDER BY camera_id").fetchall()
+        rows = conn.execute("""SELECT camera_id,name,latitude,longitude,enabled,status,last_seen_at,last_heartbeat_at,
+                               software_version FROM cameras WHERE camera_id<>? ORDER BY camera_id""",
+                            (TEST_CAMERA_ID,)).fetchall()
     result = []
     for r in rows:
+        if not viewer.can_see_camera(r["camera_id"]):
+            continue
         item = dict(r)
         last = item.get("last_seen_at")
         if not item["enabled"]:

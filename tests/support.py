@@ -103,3 +103,17 @@ class ServerTestCase(unittest.TestCase):
             return api.create_event(conn, api.new_event_id(), camera, fire_size_percent=2.0,
                                     max_temperature_c=300.0, duration_seconds=5, status=status,
                                     is_test=is_test, location=location)
+
+    def make_visibility_fixture(self):
+        """Clients for each kind of viewer, and one event of each kind they should or shouldn't see."""
+        self.anon = self.new_client()
+        self.cam_a = self.new_client()
+        self.login_camera(self.cam_a, "CAM-A", self.set_login_password("CAM-A"))
+        self.admin = self.new_client()
+        self.login_admin(self.admin)
+        self.a_unconfirmed = self.upload_event("CAM-A")["event_id"]
+        self.b_unconfirmed = self.upload_event("CAM-B")["event_id"]
+        self.b_confirmed = self.make_event("CAM-B", status="confirmed")[0]["event_id"]
+        self.test_confirmed = self.make_event("CAM-A", status="confirmed", is_test=True, location=(45.0, -70.0))[0]["event_id"]
+        self.test_unconfirmed = self.make_event("CAM-A", is_test=True)[0]["event_id"]
+        sys.modules["fire_data"].invalidate_cache()
