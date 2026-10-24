@@ -17,6 +17,8 @@ services:
         sync: false
       - key: ORS_API_KEY
         sync: false
+      - key: CARTO_API_KEY
+        sync: false
       - key: FIRMS_API_KEY
         sync: false
       - key: FIRMS_BBOX

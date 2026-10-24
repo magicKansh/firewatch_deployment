@@ -1,4 +1,5 @@
 """Admin control panel: camera logins and keys, and (admin-only) test fires."""
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -34,7 +35,7 @@ def _cameras():
 def _page(request, message="", error="", status_code=200, **extra):
     return templates.TemplateResponse(request=request, name="admin.html", status_code=status_code, context={
         "cameras": _cameras(), "test_fires": test_fires.list_test_fires(), "severities": list(test_fires.SEVERITY_INDEX),
-        "message": message, "error": error, **extra,
+        "message": message, "error": error, "carto_key": os.getenv("CARTO_API_KEY", "").strip(), **extra,
     })
 
 

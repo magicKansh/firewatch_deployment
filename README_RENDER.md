@@ -35,6 +35,7 @@ At minimum for the complete system:
 - `FIREWATCH_ADMIN_TOKEN`
 - `PUBLIC_BASE_URL`
 - `ORS_API_KEY` for address search/routing
+- `CARTO_API_KEY` for the map background (free key at https://carto.com/basemaps/apikey; without it the map shows "API key required")
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
 - `TWILIO_FROM_NUMBER`

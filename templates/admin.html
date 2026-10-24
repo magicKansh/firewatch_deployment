@@ -177,7 +177,7 @@ document.querySelectorAll("time[data-utc]").forEach(el => {
   const cameras = {{ cameras | tojson }};
   const fires = {{ test_fires | selectattr("status", "equalto", "confirmed") | list | tojson }};
   const map = L.map(el, {scrollWheelZoom: false});
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" + {{ ("?key=" ~ carto_key if carto_key else "") | tojson }}, {
     maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
   }).addTo(map);
   const points = [];
