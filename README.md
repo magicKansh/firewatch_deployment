@@ -13,7 +13,7 @@ The dashboard uses a light Carto basemap with a floating monitoring sidebar and 
 ### 1. Clone and install
 
 ```bash
-git clone <your-repo-url>
+git clone (https://github.com/magicKansh/firewatch_deployment.git)
 cd firewatch-deployment
 pip install -r requirements.txt
 ```
