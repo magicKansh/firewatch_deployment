@@ -2,6 +2,7 @@
 """Firewatch enterprise dashboard, live geographic map, and map APIs."""
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +18,23 @@ from database import TEST_CAMERA_ID, get_connection
 from fire_data import fires_for, get_last_updated, get_satellite_status
 
 BASE_DIR = Path(__file__).resolve().parent
+CARTO_API_KEY = os.getenv("CARTO_API_KEY", "").strip()
+
+
+def _basemap_style():
+    """CARTO light basemap. Since Aug 2026 CARTO watermarks its tiles "API key required" without a key."""
+    if not CARTO_API_KEY:
+        return "carto-positron"
+    # shortcut: CARTO is retiring raster tiles; switch to its vector style.json if these stop working.
+    return {
+        "version": 8,
+        "sources": {"carto": {
+            "type": "raster", "tileSize": 256,
+            "tiles": [f"https://{s}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png?key={CARTO_API_KEY}" for s in "abcd"],
+            "attribution": "© OpenStreetMap contributors © CARTO",
+        }},
+        "layers": [{"id": "carto", "type": "raster", "source": "carto"}],
+    }
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 CAMERA_STYLE = {
@@ -380,7 +398,7 @@ def build_map_figure(viewer):
         map={
             "center": {"lat": center_lat, "lon": center_lon},
             "zoom": zoom,
-            "style": "carto-positron",
+            "style": _basemap_style(),
         },
         autosize=True,
         margin={"l": 0, "r": 0, "t": 0, "b": 0},

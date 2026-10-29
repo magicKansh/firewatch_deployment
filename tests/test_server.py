@@ -39,7 +39,7 @@ class ServerFlowTests(unittest.TestCase):
             "FIREWATCH_ADMIN_TOKEN": "test-admin-token",
             "PUBLIC_BASE_URL": "https://firewatch.example",
             "TWILIO_ACCOUNT_SID": "AC123", "TWILIO_AUTH_TOKEN": "x", "TWILIO_FROM_NUMBER": "+15550000000",
-            "FIRMS_API_KEY": "",
+            "FIRMS_API_KEY": "", "CARTO_API_KEY": "carto-test-key",
         }
         self.env = mock.patch.dict(os.environ, env)
         self.env.start()
@@ -104,6 +104,8 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(admin[0]["first_seen_at"], DETECTED_AT)
         names = [t.get("name") for t in self.client.get("/api/map-figure").json()["data"]]
         self.assertNotIn("Needs review", names)
+        style = self.client.get("/api/map-figure").json()["layout"]["map"]["style"]
+        self.assertTrue(style["sources"]["carto"]["tiles"][0].endswith("?key=carto-test-key"))
 
     def test_opening_links_never_changes_anything(self):
         event_id = self.send_event()["event_id"]
